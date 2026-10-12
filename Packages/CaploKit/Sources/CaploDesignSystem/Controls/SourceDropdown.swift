@@ -96,3 +96,40 @@ public struct IconDropdown: View {
         .accessibilityLabel(accessibilityName)
     }
 }
+
+/// 与 `IconDropdown` 同款底板的图标按钮：不弹菜单，点一下开 / 关。开着时底板提亮、图标用主色，关着时图标退成次要色。
+public struct IconChipButton: View {
+    private let symbol: String
+    private let accessibilityName: String
+    private let active: Bool
+    private let action: @MainActor () -> Void
+    @Environment(\.isEnabled) private var enabled
+    @State private var hovered = false
+
+    public init(symbol: String, accessibilityName: String, active: Bool = false, action: @escaping @MainActor () -> Void) {
+        self.symbol = symbol; self.accessibilityName = accessibilityName; self.active = active; self.action = action
+    }
+
+    public var body: some View {
+        Button(action: action) {
+            Image(systemName: symbol).font(.system(size: 13, weight: .medium)).frame(width: CaploMetrics.Icon.control)
+                .padding(.horizontal, 8)
+                .frame(height: CaploMetrics.ControlHeight.medium)
+                .foregroundStyle(active ? CaploColor.textPrimary : CaploColor.textSecondary)
+                .background {
+                    CaploMaterialBackground(.raised)
+                        .overlay(CaploColor.glassSheen.opacity(hovered ? 1 : 0))
+                        .overlay(CaploColor.textPrimary.opacity(active ? 0.16 : 0))
+                        .clipShape(RoundedRectangle(cornerRadius: CaploMetrics.Radius.control))
+                }
+                .contentShape(RoundedRectangle(cornerRadius: CaploMetrics.Radius.control))
+        }
+        .buttonStyle(PopupButtonStyle())
+        .fixedSize()
+        .opacity(enabled ? 1 : 0.4)
+        .onHover { hovered = $0 }
+        .help(accessibilityName)
+        .accessibilityLabel(accessibilityName)
+        .accessibilityAddTraits(active ? .isSelected : [])
+    }
+}

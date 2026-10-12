@@ -17,6 +17,7 @@ public struct CaploMenuView: View {
         Button(ScreenRecorder.shared.isBusy ? "显示录制控制" : "新建录制") { StudioWindows.showRecorder() }
         Button("项目中心") { ProjectLibraryWindow.shared.show() }.disabled(ScreenRecorder.shared.isBusy)
         Button("打开工程") { ProjectLibraryModel.shared.importProject() }.disabled(ScreenRecorder.shared.isBusy)
+        Button("提词器") { TeleprompterWindow.toggle() }
         Divider()
         Button("设置") { StudioWindows.showSettings() }
         UpdateMenuItem()
@@ -32,6 +33,7 @@ public struct CaploAppCommands: Commands {
             Button("新建录制") { StudioWindows.showRecorder() }.shortcut(.newRecording)
             Button("打开工程") { ProjectLibraryModel.shared.importProject() }.shortcut(.openProject).disabled(ScreenRecorder.shared.isBusy)
             Button("项目中心") { ProjectLibraryWindow.shared.show() }.shortcut(.projectLibrary).disabled(ScreenRecorder.shared.isBusy)
+            Button("提词器") { TeleprompterWindow.toggle() }
         }
         CommandGroup(replacing: .appSettings) {
             Button("设置") { StudioWindows.showSettings() }.shortcut(.settings)

@@ -51,6 +51,8 @@ public struct RecordBarView: View {
                     .keyboardShortcut(.cancelAction)
                 modeGlyph
                 settingsDropdown
+                // 提词器单独一个按钮：它是录制时随手开关的东西，不是一项设置。开着时按钮亮起。
+                IconChipButton(symbol: "scroll", accessibilityName: String(localized: "提词器"), active: TeleprompterModel.shared.visible) { TeleprompterWindow.toggle() }
                 cameraDropdown
                 microphoneDropdown
                 systemAudioDropdown

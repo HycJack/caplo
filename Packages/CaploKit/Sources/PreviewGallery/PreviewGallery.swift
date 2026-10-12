@@ -119,6 +119,7 @@ struct PreviewGallery {
         try await render(StudioConfirmSheet(title: "删除 3 个工程？", message: "“录制 2026年9月7日 4:30”、“录制 2026年9月7日 3:34”、“录制 2026年9月7日 3:25”会移到废纸篓，可从访达恢复。", confirmTitle: "删除 3 项", danger: true, confirm: {}, cancel: {}).background(CaploColor.surfaceCanvasWell), name: "confirm-sheet", size: CGSize(width: 380, height: 190), scheme: .dark, output: output)
         try await render(CaploSettingsView(), name: "settings", size: CaploSettingsView.size, scheme: .light, output: output)
         try await render(CaploSettingsView(), name: "settings-dark", size: CaploSettingsView.size, scheme: .dark, output: output)
+        try await render(TeleprompterPreview(), name: "teleprompter", size: TeleprompterPreview.size, scheme: .dark, output: output)
         try await render(CaploSettingsView(previewSection: "录制"), name: "settings-recording", size: CaploSettingsView.size, scheme: .dark, output: output)
         try await render(CaploSettingsView(previewSection: "导出"), name: "settings-export", size: CaploSettingsView.size, scheme: .dark, output: output)
         try await render(CaploSettingsView(previewSection: "快捷键"), name: "settings-shortcuts", size: CaploSettingsView.size, scheme: .dark, output: output)

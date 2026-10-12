@@ -6,7 +6,8 @@ import EditingCore
 ///
 /// 用只读的事件监听（listen-only tap），对应系统的"输入监控"权限——比辅助功能权限窄，读得到按键、改不了也拦不住。
 /// "仅快捷键"一档下，不带 ⌘ ⌃ ⌥ 的普通按键在这里就丢掉，不进内存也不落盘。
-/// 密码框等安全输入期间系统本来就不把按键交给监听方。本应用在前台时的按键不记（那是在操作 Caplo 自己）。
+/// 密码框等安全输入期间系统本来就不把按键交给监听方。按键落在本应用自己的窗口里时不记（那是在操作 Caplo，
+/// 包括不激活应用也能输入的浮窗，如提词器）。
 @MainActor
 final class KeyRecorder {
     private let mode: KeyCaptureMode
@@ -44,7 +45,7 @@ final class KeyRecorder {
             if let tap { CGEvent.tapEnable(tap: tap, enable: true) }
             return
         }
-        guard type == .keyDown, event.getIntegerValueField(.keyboardEventAutorepeat) == 0, !NSApp.isActive else { return }
+        guard type == .keyDown, event.getIntegerValueField(.keyboardEventAutorepeat) == 0, !NSApp.isActive, NSApp.keyWindow == nil else { return }
         let flags = event.flags
         var modifiers: KeyPress.Modifiers = []
         if flags.contains(.maskCommand) { modifiers.insert(.command) }

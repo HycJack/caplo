@@ -1639,6 +1639,17 @@
         }
       }
     },
+    "关闭提词器": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Close Teleprompter"
+          }
+        }
+      }
+    },
     "兼容性最好：任何播放器、网站、聊天软件都能直接播放。": {
       "extractionState": "manual",
       "localizations": {
@@ -2687,6 +2698,17 @@
         }
       }
     },
+    "回到开头": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Back to Start"
+          }
+        }
+      }
+    },
     "回到最近的录制": {
       "extractionState": "manual",
       "localizations": {
@@ -3024,6 +3046,17 @@
           "stringUnit": {
             "state": "translated",
             "value": "Show in Finder"
+          }
+        }
+      }
+    },
+    "在这里粘贴或输入讲稿": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Paste or type your script here"
           }
         }
       }
@@ -4208,6 +4241,17 @@
         }
       }
     },
+    "开始滚动": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Start Scrolling"
+          }
+        }
+      }
+    },
     "开始转写": {
       "extractionState": "manual",
       "localizations": {
@@ -5161,6 +5205,17 @@
           "stringUnit": {
             "state": "translated",
             "value": "Show Early"
+          }
+        }
+      }
+    },
+    "提词器": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Teleprompter"
           }
         }
       }
@@ -6251,6 +6306,17 @@
           "stringUnit": {
             "state": "translated",
             "value": "Pause Recording"
+          }
+        }
+      }
+    },
+    "暂停滚动": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pause Scrolling"
           }
         }
       }
@@ -7550,6 +7616,17 @@
           "stringUnit": {
             "state": "translated",
             "value": "Smoother scrolling and cursor motion, larger files. Preview and export use the same frame rate."
+          }
+        }
+      }
+    },
+    "滚动速度": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Scroll Speed"
           }
         }
       }
@@ -10784,6 +10861,17 @@
           "stringUnit": {
             "state": "translated",
             "value": "Shadow"
+          }
+        }
+      }
+    },
+    "随录制滚动": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Scroll with Recording"
           }
         }
       }
