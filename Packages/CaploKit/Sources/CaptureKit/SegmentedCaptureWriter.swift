@@ -83,6 +83,7 @@ private final class OpenSegment: @unchecked Sendable {
     var end: CMTime?
     var tracks: [MediaRole: TrackFile] = [:]
     var events: [PointerSample] = []
+    var keys: [KeyPress] = []
     init(index: Int, start: CMTime) { self.index = index; self.start = start }
 }
 
@@ -155,6 +156,20 @@ final class SegmentedCaptureWriter: NSObject, SCStreamOutput, @unchecked Sendabl
                       segment.events.count < Self.maximumEventsPerSegment || sample.kind == .click || sample.kind == .release else { continue }
                 var local = sample; local.time -= segment.start.seconds
                 segment.events.append(local)
+            }
+        }
+    }
+
+    /// 按键与指针事件同样按片段归档；每段最多 2000 次（10 秒里人手按不到这个数，只为封住异常输入）。
+    static let maximumKeysPerSegment = 2000
+    func appendKey(_ press: KeyPress) {
+        queue.async { [self] in
+            guard !stopped, !paused else { return }
+            for segment in retiring + (current.map { [$0] } ?? []) {
+                guard press.time >= segment.start.seconds, segment.end == nil || press.time < segment.end!.seconds,
+                      segment.keys.count < Self.maximumKeysPerSegment else { continue }
+                var local = press; local.time -= segment.start.seconds
+                segment.keys.append(local)
             }
         }
     }
@@ -325,6 +340,13 @@ final class SegmentedCaptureWriter: NSObject, SCStreamOutput, @unchecked Sendabl
                             let path = String(format: "Events/%06d.", segment.index) + PointerEventFile.pathExtension
                             try PointerEventFile.data(for: segment.events.filter { $0.time < duration }).write(to: project.appendingPathComponent(path), options: .atomic)
                             record.eventsPath = path
+                        }
+                        let keys = segment.keys.filter { $0.time < duration }
+                        if !keys.isEmpty {
+                            // 一段里只有几十次按键，明文 JSON 就够小，不压缩。
+                            let path = String(format: "Events/%06d-keys.json", segment.index)
+                            try JSONEncoder().encode(keys).write(to: project.appendingPathComponent(path), options: .atomic)
+                            record.keysPath = path
                         }
                         try ProjectStorage.commit(record, to: project)
                     } catch { issue = error.localizedDescription }

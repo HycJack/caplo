@@ -143,6 +143,7 @@ public final class RecordBarModel {
         options.countdown = max(0, min(10, defaults.object(forKey: "recording.countdown") as? Int ?? 3))
         options.frameRate = Double(max(24, min(120, defaults.object(forKey: "recording.frameRate") as? Int ?? 60)))
         options.region = mode == .region ? region : nil
+        options.keyCapture = RecordingKeyPreferences.mode(defaults: defaults)
         RecordingAudioPreferences.apply(to: &options)
         RecordingCameraPreferences.apply(to: &options)
         // 所选设备不在线就不带这路输入，而不是报错拦住录制。
@@ -154,6 +155,8 @@ public final class RecordBarModel {
             center.refresh()
             if options.microphone, center.status(.microphone) == .denied { PermissionsWindow.shared.show(.standalone, focus: .microphone); return }
             if options.camera, center.status(.camera) == .denied { PermissionsWindow.shared.show(.standalone, focus: .camera); return }
+            // 开着"记录按键"却没有输入监控权限：同样先带去授权，不悄悄录一段没有按键的。
+            if options.keyCapture != .off, center.status(.keyboard) != .granted { PermissionsWindow.shared.show(.standalone, focus: .keyboard); return }
         }
         guard StudioWindows.prepareForRecording() else { return }
         localError = nil

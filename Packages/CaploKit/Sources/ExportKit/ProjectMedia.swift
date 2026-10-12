@@ -280,7 +280,8 @@ public enum ProjectMedia {
     nonisolated static func pointerTimeline(url: URL, document: ProjectDocument) throws -> PointerTimeline {
         let events = try EditStorage.events(in: url, document: document)
         return PointerTimeline(events: events, cursorEmbedded: document.capture?.cursorEmbedded != false,
-                               capturedCursors: CursorStorage.load(ids: Set(events.compactMap(\.cursorAssetID)), in: url))
+                               capturedCursors: CursorStorage.load(ids: Set(events.compactMap(\.cursorAssetID)), in: url),
+                               keys: KeyTimeline(presses: EditStorage.keys(in: url, document: document)))
     }
 
     nonisolated public static func loadPointers(url: URL, document: ProjectDocument) throws -> PointerTimeline {
@@ -348,6 +349,9 @@ public enum ProjectMedia {
     /// `pointers`：编辑会话已经解析好的指针事件，传进来就不再重读。
     public static func export(url: URL, document: ProjectDocument, levels: AudioLevels, destination: URL, edit: VideoEdit? = nil, settings: ExportSettings,
                               pointers: PointerTimeline? = nil, progress: @escaping @MainActor (Double) -> Void) async throws {
+        // 示例键帽只给编辑器预览用，成片里不能有。
+        var edit = edit
+        edit?.keystrokes?.sample = false
         let (composition, mix) = try await compose(url: url, document: document, levels: levels, edit: edit)
         // 码率与帧率自己定（见 ExportEncoder）：系统预设在 4K 上只给约 10 Mbps 且降到 30 fps。
         let rate = settings.outputFrameRate(recorded: document.frameRate)

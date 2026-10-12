@@ -90,7 +90,10 @@ final class VideoEditorModel {
     var position = 0.0
     /// 鼠标掠览只改变画布定位，不改播放头、选区或工程；移出后恢复播放头画面。
     private(set) var skimPosition: Double?
-    var playing = false
+    var playing = false { didSet { if playing != oldValue { syncKeystrokeSample() } } }
+    /// "按键"面板开着且暂停时，画面上放一组示例键帽（播放头处没有真按键时才画）：调位置、大小看得见落点。
+    /// 只影响预览：标记不存盘，导出时清掉，撤销重做与读盘之后按当前状态重新落一遍。
+    var keystrokePanelVisible = false { didSet { if keystrokePanelVisible != oldValue { syncKeystrokeSample() } } }
     /// 还没有可用的播放项（初次打开或时间线为空）；只有这时画布才显示"载入画面"。
     var loading = true
     /// 片段变化后正在静默重建播放项；期间画布保留上一帧，定位用离线静帧兜底。
@@ -217,6 +220,7 @@ final class VideoEditorModel {
             // 读盘期间窗口可能已经关掉（close 会放掉租约）：什么都不再改，也不写盘。
             guard !closed else { return }
             edit = loaded
+            syncKeystrokeSample(refresh: false)
             selectedClip = edit.clips.first?.id
             selectedClipIDs = Set(edit.clips.prefix(1).map(\.id))
             ready = true; saveStatus = String(localized: "已保存")
@@ -321,12 +325,20 @@ final class VideoEditorModel {
     func undo() {
         settleInteraction()
         guard let previous = history.undo(current: edit) else { return }
-        edit = previous; save(); normalizeSelection(); refreshPresentation()
+        edit = previous; syncKeystrokeSample(refresh: false); save(); normalizeSelection(); refreshPresentation()
     }
     func redo() {
         settleInteraction()
         guard let next = history.redo(current: edit) else { return }
-        edit = next; save(); normalizeSelection(); refreshPresentation()
+        edit = next; syncKeystrokeSample(refresh: false); save(); normalizeSelection(); refreshPresentation()
+    }
+    /// 把示例键帽的标记对齐到"面板开着且没在播放"。历史快照里可能带着当时的标记，所以撤销重做之后也要调一次。
+    private func syncKeystrokeSample(refresh: Bool = true) {
+        let wanted = keystrokePanelVisible && !playing
+        guard (edit.keystrokes?.sample ?? false) != wanted else { return }
+        if wanted { var style = edit.keystrokes ?? KeystrokeStyle(); style.sample = true; edit.keystrokes = style }
+        else { edit.keystrokes?.sample = false }
+        if refresh, ready, !loading { refreshPresentation() }
     }
     /// 撤销 / 重做前先把进行中的交互记成一步：打字防抖还没到点、滑块还按着时直接拿撤销栈顶覆盖，
     /// 之后防抖到点或松手的 endInteraction 会拿旧快照再记一笔，撤销栈里多出一步"把撤销又撤回去"。

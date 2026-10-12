@@ -15,7 +15,7 @@ struct PermissionsView: View {
     var onContinue: () -> Void = {}
     var onLater: () -> Void = {}
 
-    static let size = CGSize(width: 540, height: 480)
+    static let size = CGSize(width: 540, height: 540)
 
     var body: some View {
         VStack(alignment: .leading, spacing: CaploMetrics.Spacing.l) {
@@ -98,16 +98,16 @@ private struct PermissionRow: View {
 
     private var caption: String {
         switch status {
-        case .denied where kind == .screen: String(localized: "在系统设置中打开\u{201C}\(PermissionCenter.appName)\u{201D}，再重新打开")
+        case .denied where kind.appliesAfterRelaunch: String(localized: "在系统设置中打开\u{201C}\(PermissionCenter.appName)\u{201D}，再重新打开")
         case .denied: String(localized: "已拒绝，需在系统设置中开启")
         case .needsRelaunch: String(localized: "已开启，重新打开后生效")
         default: kind.purpose
         }
     }
 
-    /// 屏幕录制待生效：说明用中性色（多半是用户还在操作，不是拒绝）。
+    /// 屏幕录制、输入监控待生效：说明用中性色（多半是用户还在操作，不是拒绝）。
     private var captionColor: Color {
-        status == .denied && kind != .screen ? CaploColor.warning : CaploColor.textSecondary
+        status == .denied && !kind.appliesAfterRelaunch ? CaploColor.warning : CaploColor.textSecondary
     }
 
     @ViewBuilder private var trailing: some View {
@@ -118,8 +118,8 @@ private struct PermissionRow: View {
                 .labelStyle(.titleAndIcon)
         case .notDetermined:
             Button("允许", action: action).buttonStyle(StudioButtonStyle(kind.required ? .primary : .secondary, size: .small))
-        case .denied where kind == .screen:
-            // 屏幕录制的开关打开后要重新打开应用才查得到：两步并列给出。
+        case .denied where kind.appliesAfterRelaunch:
+            // 屏幕录制、输入监控的开关打开后要重新打开应用才查得到：两步并列给出。
             HStack(spacing: CaploMetrics.Spacing.s) {
                 Button("打开设置", action: action).buttonStyle(StudioButtonStyle(.secondary, size: .small))
                 Button("重新打开", action: relaunch).buttonStyle(StudioButtonStyle(.primary, size: .small))

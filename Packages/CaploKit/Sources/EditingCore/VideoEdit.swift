@@ -226,6 +226,8 @@ public struct VideoEdit: Codable, Equatable, Sendable {
     /// 字幕。可选，日常读写用 `captionList`。
     public var captions: [CaptionCue]?
     public var captionStyle: CaptionStyle?
+    /// 按键显示的样式。nil 表示默认样式：录制时记了按键就显示（见 `KeyTimeline.frame`）。
+    public var keystrokes: KeystrokeStyle?
     public init(duration: Double) { clips = duration > 0 ? [VideoClip(sourceStart: 0, duration: duration)] : [] }
     public var duration: Double {
         let mediaEnd = [clips, cameraClips ?? [], systemClips ?? [], microphoneClips ?? []].map { values in
@@ -306,7 +308,7 @@ public struct VideoEdit: Codable, Equatable, Sendable {
         }
         guard (5...Self.maximumSchemaVersion).contains(schemaVersion),
               Set(captionList.map(\.id)).count == captionList.count,
-              captionStyle?.isValid != false,
+              captionStyle?.isValid != false, keystrokes?.isValid != false,
               captionList.allSatisfy({ cue in cue.isValid && cue.sourceEnd <= sourceDuration + 0.001
                                        && (cue.timelineStart.map { $0 + cue.sourceDuration <= editedDuration + 0.001 } ?? true) }),
               Set(textList.map(\.id)).count == textList.count,

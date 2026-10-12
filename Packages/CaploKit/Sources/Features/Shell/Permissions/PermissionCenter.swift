@@ -7,14 +7,15 @@ import UserNotifications
 import ExportKit
 
 /// Caplo 用到的系统权限。点击与指针轨迹只用鼠标全局监听，不需要辅助功能权限，这里不列。
+/// 输入监控只在打开"记录按键"时才用：只读地知道按了哪个键，用来把快捷键显示在成片上。
 enum PermissionKind: String, CaseIterable, Identifiable, Sendable {
-    case screen, microphone, camera, speech, notifications
+    case screen, microphone, camera, keyboard, speech, notifications
     var id: Self { self }
 
     var title: String {
         switch self {
         case .screen: String(localized: "屏幕录制"); case .microphone: String(localized: "麦克风"); case .camera: String(localized: "摄像头"); case .speech: String(localized: "语音识别")
-        case .notifications: String(localized: "通知")
+        case .notifications: String(localized: "通知"); case .keyboard: String(localized: "输入监控")
         }
     }
 
@@ -23,6 +24,7 @@ enum PermissionKind: String, CaseIterable, Identifiable, Sendable {
         case .screen: String(localized: "录制屏幕与窗口画面")
         case .microphone: String(localized: "录制讲解声音")
         case .camera: String(localized: "录制人像画中画")
+        case .keyboard: String(localized: "在成片上显示按下的快捷键")
         case .speech: String(localized: "在本机转写字幕")
         case .notifications: String(localized: "有新版本时提醒")
         }
@@ -31,17 +33,21 @@ enum PermissionKind: String, CaseIterable, Identifiable, Sendable {
     var symbol: String {
         switch self {
         case .screen: "rectangle.dashed.badge.record"; case .microphone: "mic"; case .camera: "video"; case .speech: "captions.bubble"; case .notifications: "bell"
+        case .keyboard: "keyboard"
         }
     }
 
     /// 只有屏幕录制是必需的；其余在用户打开对应功能时才需要。
     var required: Bool { self == .screen }
+    /// 在系统设置里打开开关后，要重新打开应用才生效（也才查得到）的两项。
+    var appliesAfterRelaunch: Bool { self == .screen || self == .keyboard }
 
     /// 系统设置"隐私与安全性"里对应面板的锚点。
     var settingsAnchor: String {
         switch self {
         case .screen: "Privacy_ScreenCapture"; case .microphone: "Privacy_Microphone"
         case .camera: "Privacy_Camera"; case .speech: "Privacy_SpeechRecognition"
+        case .keyboard: "Privacy_ListenEvent"
         case .notifications: ""
         }
     }
@@ -67,6 +73,7 @@ enum PermissionStatus: Equatable, Sendable {
 final class PermissionCenter {
     static let shared = PermissionCenter()
     static let screenRequestedKey = "permissions.screenRequested"
+    static let keyboardRequestedKey = "permissions.keyboardRequested"
     /// 启动引导是否已走完（点过"开始使用"或"稍后"）。没走完时每次启动都显示，包括系统为屏幕录制授权重启应用之后。
     static let onboardingDoneKey = "permissions.onboardingDone"
 
@@ -96,6 +103,9 @@ final class PermissionCenter {
         default: .denied
         }
         statuses[.screen] = screenStatus()
+        // 输入监控没有"未询问 / 已拒绝"的查询接口，只有一个不弹窗的预检：请求过还是假就当作要去系统设置里开。
+        statuses[.keyboard] = CGPreflightListenEventAccess() ? .granted
+            : (UserDefaults.standard.bool(forKey: Self.keyboardRequestedKey) ? .denied : .notDetermined)
         refreshNotifications()
     }
 
@@ -194,6 +204,11 @@ final class PermissionCenter {
                 // 询问框弹出的同时这次读取就会失败，不能据此判"拒绝"；状态由轮询按预检结果更新。
                 Task { _ = await Self.canReadShareableContent() }
                 statuses[.screen] = .denied
+            case .keyboard:
+                // 系统弹一次"前往系统设置"的提示并把 Caplo 加进输入监控列表；打开开关后由轮询更新状态。
+                UserDefaults.standard.set(true, forKey: Self.keyboardRequestedKey)
+                _ = CGRequestListenEventAccess()
+                refresh()
             case .microphone, .camera:
                 Task { [weak self] in
                     _ = await AVCaptureDevice.requestAccess(for: kind == .microphone ? .audio : .video)

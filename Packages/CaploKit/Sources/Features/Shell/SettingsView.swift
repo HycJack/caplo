@@ -32,6 +32,7 @@ public struct CaploSettingsView: View {
 
     @AppStorage("recording.countdown") private var countdown = 3
     @AppStorage("recording.frameRate") private var frameRate = 60
+    @AppStorage(RecordingKeyPreferences.key) private var keyCapture = KeyCaptureMode.off
     @AppStorage("recording.microphone") private var microphone = false
     @AppStorage("recording.systemAudio") private var systemAudio = false
     @AppStorage("recording.camera") private var camera = false
@@ -185,6 +186,14 @@ public struct CaploSettingsView: View {
         }
     }
 
+    private var keyCaptureCaption: String {
+        switch keyCapture {
+        case .off: String(localized: "不读取键盘。")
+        case .shortcuts: String(localized: "只记带 ⌘ ⌃ ⌥ 的组合键与功能键，不记打字内容。")
+        case .all: String(localized: "所有按键都会记下并可显示在成片上，录制时留意密码。")
+        }
+    }
+
     // MARK: 录制
 
     @ViewBuilder private var recording: some View {
@@ -196,6 +205,13 @@ public struct CaploSettingsView: View {
         SettingsGroup(String(localized: "开始录制")) {
             SettingsRow(String(localized: "倒计时")) {
                 ChipGroup([0, 3, 5, 10], selection: $countdown) { $0 == 0 ? String(localized: "不倒计时") : String(localized: "\($0) 秒") }
+            }
+        }
+        SettingsGroup(String(localized: "按键")) {
+            SettingsRow(String(localized: "记录按键"), caption: keyCaptureCaption) {
+                ChipGroup(KeyCaptureMode.allCases, selection: Binding(get: { keyCapture }, set: { mode in
+                    keyCapture = mode; RecordingKeyPreferences.requestAccessIfNeeded(for: mode)
+                })) { $0.title }
             }
         }
         SettingsGroup(String(localized: "默认输入")) {

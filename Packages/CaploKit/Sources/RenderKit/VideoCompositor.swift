@@ -76,6 +76,10 @@ public final class SceneInstruction: NSObject, AVVideoCompositionInstructionProt
         if let index = timeline.clipIndex(at: time), timeline.clips[index].cursorHidden || timeline.clips[index].card != nil { return PointerFrame() }
         return pointers.frame(at: time, timeline: timeline, effects: edit.pointer)
     }
+    /// 这一帧要显示的按键。隐藏光标的片段照常显示按键：那只是不画箭头。
+    public func keyFrame(at time: Double) -> KeystrokeFrame? {
+        pointers.keys.frame(at: time, timeline: timeline, style: edit.keystrokes)
+    }
 
     /// 空轨道区间可能产生黑色 sourceFrame，必须按有效区间判定；二分查询避免长工程逐段扫描。
     public func cameraVisible(at time: CMTime) -> Bool {
@@ -166,7 +170,8 @@ public final class VideoCompositor: NSObject, AVVideoCompositing, @unchecked Sen
                 let backdrop = backdrops.backdrop(edit: instruction.edit, sourceSize: SceneRenderer.croppedSourceSize(sourceImage?.extent.size ?? size, layout: instruction.edit.layout),
                                                   size: size, backgroundImage: instruction.backgroundImage,
                                                   hasCamera: camera != nil, context: context)
-                let image = SceneRenderer.frame(source: sourceImage, edit: instruction.edit, time: request.compositionTime.seconds, size: size, camera: camera, pointer: instruction.pointerFrame(at: request.compositionTime.seconds), backgroundImage: instruction.backgroundImage, backdrop: backdrop, timeline: instruction.timeline, croppedFocuses: instruction.croppedFocuses)
+                let image = SceneRenderer.frame(source: sourceImage, edit: instruction.edit, time: request.compositionTime.seconds, size: size, camera: camera, pointer: instruction.pointerFrame(at: request.compositionTime.seconds), backgroundImage: instruction.backgroundImage, backdrop: backdrop, timeline: instruction.timeline, croppedFocuses: instruction.croppedFocuses,
+                                                keys: instruction.keyFrame(at: request.compositionTime.seconds))
                 // 输出按 BT.709 编码并在帧上标明：导出文件的色彩标签是 BT.709，像素就必须按 BT.709 曲线写。
                 // 以前按 sRGB 曲线写、却标成 BT.709，播放器按 BT.709 解读时暗部与中间调整体提亮约 10 个色阶，画面发灰。
                 context.render(image, to: output, bounds: CGRect(origin: .zero, size: size), colorSpace: SceneColor.output)
@@ -338,7 +343,15 @@ public enum SceneRenderer {
 
     /// `backdrop`：缓存好的"背景 + 阴影"；人像在后时缓存的是只有阴影的透明图层（见 `SceneBackdropCache`）。
     /// `croppedFocuses`：调用方预先换算好的裁切后镜头（见 `SceneInstruction.croppedFocuses`）；不传就当场换算，结果相同。
-    public static func frame(source full: CIImage?, edit: VideoEdit, time: Double, size: CGSize, camera: CIImage? = nil, pointer: PointerFrame = PointerFrame(), backgroundImage: CIImage? = nil, backdrop: CIImage? = nil, timeline: TimelineIndex? = nil, croppedFocuses: [FocusSegment]? = nil) -> CIImage {
+    /// `keys`：这一帧要显示的按键（见 `KeyTimeline.frame`）；画在最上面，不跟着镜头、版式变换走。
+    public static func frame(source full: CIImage?, edit: VideoEdit, time: Double, size: CGSize, camera: CIImage? = nil, pointer: PointerFrame = PointerFrame(), backgroundImage: CIImage? = nil, backdrop: CIImage? = nil, timeline: TimelineIndex? = nil, croppedFocuses: [FocusSegment]? = nil, keys: KeystrokeFrame? = nil) -> CIImage {
+        let picture = scene(source: full, edit: edit, time: time, size: size, camera: camera, pointer: pointer, backgroundImage: backgroundImage,
+                            backdrop: backdrop, timeline: timeline, croppedFocuses: croppedFocuses)
+        guard let keys, let layer = KeystrokeRenderer.shared.image(for: keys, canvas: size) else { return picture }
+        return layer.composited(over: picture).cropped(to: CGRect(origin: .zero, size: size))
+    }
+
+    private static func scene(source full: CIImage?, edit: VideoEdit, time: Double, size: CGSize, camera: CIImage?, pointer: PointerFrame, backgroundImage: CIImage?, backdrop: CIImage?, timeline: TimelineIndex?, croppedFocuses: [FocusSegment]?) -> CIImage {
         let bounds = CGRect(origin: .zero, size: size)
         let behind = cameraIsBehind(edit) && camera != nil
         // 文字投影与画面层的摆放各算一次：字幕、文字、版式变换共用同一份结果。

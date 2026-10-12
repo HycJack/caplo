@@ -28,6 +28,11 @@ import RenderKit
         writer.appendPointer(sample, cursor: native)
     }
     writer.appendPointer(PointerSample(time: 10.25, x: 0.6, y: 0.5, kind: .click))
+    if mode == 0 {
+        // 按键与指针事件走同一条归档路径：一个在片段开头之前（剪掉的那段里），一个在播放头前 0.1 秒。
+        writer.appendKey(KeyPress(time: 10.05, keyCode: 0, modifiers: [], label: "a"))
+        writer.appendKey(KeyPress(time: 10.3, keyCode: 8, modifiers: [.command], label: "c"))
+    }
     try await writer.finish(at: CMTime(seconds: 12, preferredTimescale: 600))
     let document = try ProjectStorage.load(url)
     var edit = try EditStorage.load(in: url, document: document)
@@ -84,6 +89,27 @@ import RenderKit
     let item = try await ProjectMedia.playerItem(url: url, document: document, levels: edit.audio, edit: edit)
     let first = try #require(item.videoComposition?.instructions.first as? SceneInstruction)
     #expect(first.pointerFrame(at: 0.3).position != nil && first.pointerFrame(at: 0.3).clicks.count == 1)
+    if mode == 0 {
+        // 按键显示：录下的快捷键按素材时间落在成片上；剪掉的那段里按的键不漏出来；关掉就不画。
+        #expect(document.segments.first?.keysPath != nil)
+        #expect(first.keyFrame(at: 0.3)?.groups == [["⌘", "C"]])
+        #expect(first.keyFrame(at: 0.05) == nil)
+        // 示例键帽：只在这一刻没有真按键时出现，而且这个标记不存盘。
+        var sampled = KeystrokeStyle(); sampled.sample = true
+        #expect(first.pointers.keys.frame(at: 0.05, timeline: first.timeline, style: sampled)?.groups == KeystrokeStyle.sampleGroups)
+        #expect(first.pointers.keys.frame(at: 0.3, timeline: first.timeline, style: sampled)?.groups == [["⌘", "C"]])
+        #expect(try JSONDecoder().decode(KeystrokeStyle.self, from: JSONEncoder().encode(sampled)).sample == false)
+        var silent = edit; silent.keystrokes = KeystrokeStyle(); silent.keystrokes?.enabled = false
+        let without = pixels(try await renderer.render(url: url, document: document, edit: silent, time: 0.3))
+        var keyPixels = 0, keyMatched = 0
+        for index in stride(from: 0, to: expected.count, by: 4)
+            where (0..<3).map({ abs(Int(expected[index + $0]) - Int(without[index + $0])) }).max()! > 45 {
+            keyPixels += 1
+            if (0..<3).allSatisfy({ abs(Int(expected[index + $0]) - Int(actual[index + $0])) < 30 }) { keyMatched += 1 }
+        }
+        #expect(keyPixels > 500, "键帽没有画到预览上")
+        #expect(Double(keyMatched) / Double(max(1, keyPixels)) > 0.85, "导出的键帽与预览不一致")
+    }
     var hidden = edit; hidden.pointer?.cursorVisible = false; hidden.pointer?.clicksVisible = false
     try ProjectMedia.updatePresentation(item: item, previous: edit, edit: hidden)
     let changed = try #require(item.videoComposition?.instructions.first as? SceneInstruction)

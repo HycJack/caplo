@@ -119,6 +119,7 @@ struct PreviewGallery {
         try await render(StudioConfirmSheet(title: "删除 3 个工程？", message: "“录制 2026年9月7日 4:30”、“录制 2026年9月7日 3:34”、“录制 2026年9月7日 3:25”会移到废纸篓，可从访达恢复。", confirmTitle: "删除 3 项", danger: true, confirm: {}, cancel: {}).background(CaploColor.surfaceCanvasWell), name: "confirm-sheet", size: CGSize(width: 380, height: 190), scheme: .dark, output: output)
         try await render(CaploSettingsView(), name: "settings", size: CaploSettingsView.size, scheme: .light, output: output)
         try await render(CaploSettingsView(), name: "settings-dark", size: CaploSettingsView.size, scheme: .dark, output: output)
+        try await render(CaploSettingsView(previewSection: "录制"), name: "settings-recording", size: CaploSettingsView.size, scheme: .dark, output: output)
         try await render(CaploSettingsView(previewSection: "导出"), name: "settings-export", size: CaploSettingsView.size, scheme: .dark, output: output)
         try await render(CaploSettingsView(previewSection: "快捷键"), name: "settings-shortcuts", size: CaploSettingsView.size, scheme: .dark, output: output)
         try await render(CaploSettingsView(previewSection: "关于"), name: "settings-about", size: CaploSettingsView.size, scheme: .dark, output: output)
@@ -156,6 +157,8 @@ struct PreviewGallery {
             // 卡片正中：画面层完全退场，只有背景与卡片上的字（演示工程第 9 秒插了一块 3 秒的章节卡片）。
             try await render(VideoEditorPreview(projectURL: URL(fileURLWithPath: path), time: 10.5), name: "editor-card", size: CGSize(width: 1360, height: 860), scheme: .dark, output: output)
             try await render(VideoEditorPreview(projectURL: URL(fileURLWithPath: path), time: 2.4, initialTab: "光标"), name: "editor-cursor", size: CGSize(width: 1360, height: 860), scheme: .dark, output: output)
+            try await render(VideoEditorPreview(projectURL: URL(fileURLWithPath: path), time: 2.4, initialTab: "按键"), name: "editor-keys", size: CGSize(width: 1360, height: 860), scheme: .dark, output: output)
+            try await render(VideoEditorPreview(projectURL: URL(fileURLWithPath: path), time: 6, initialTab: "按键"), name: "editor-keys-sample", size: CGSize(width: 1360, height: 860), scheme: .dark, output: output)
             if argument == "--pointer-demo" {
                 try await render(VideoEditorPreview(projectURL: URL(fileURLWithPath: path), time: 2.4, initialTab: "光标"), name: "editor-pointer", size: CGSize(width: 1360, height: 860), scheme: .light, output: output)
                 try await render(VideoEditorPreview(projectURL: URL(fileURLWithPath: path), time: 2.4, initialTab: "光标"), name: "editor-pointer-dark", size: CGSize(width: 1360, height: 860), scheme: .dark, output: output)

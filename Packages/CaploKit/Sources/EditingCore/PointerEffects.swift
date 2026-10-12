@@ -136,8 +136,11 @@ public struct PointerTimeline: Sendable {
         }
         return nil
     }
-    public init(events: [PointerSample], cursorEmbedded: Bool = true, capturedCursors: [String: CapturedCursor] = [:]) {
+    /// 同一次录制记下的按键。跟着指针时间线一起装载、一起交给合成器，调用方不必再多传一样东西。
+    public let keys: KeyTimeline
+    public init(events: [PointerSample], cursorEmbedded: Bool = true, capturedCursors: [String: CapturedCursor] = [:], keys: KeyTimeline = KeyTimeline()) {
         self.capturedCursors = capturedCursors
+        self.keys = keys
         self.events = events.filter { $0.time.isFinite && $0.time >= 0 && $0.x.isFinite && $0.y.isFinite && (0...1).contains($0.x) && (0...1).contains($0.y) }
             .sorted { $0.time < $1.time }
         self.clicks = self.events.filter { $0.kind == .click }

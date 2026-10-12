@@ -59,7 +59,8 @@ public actor EditorPreviewRenderer {
                                               size: size, backgroundImage: background?.image, hasCamera: camera != nil, context: context)
             let result = SceneRenderer.frame(source: sourceImage, edit: renderedEdit, time: time, size: size, camera: camera,
                 pointer: clipHidesCursor ? PointerFrame() : pointers.frame(at: time, timeline: timeline, effects: edit.pointer),
-                backgroundImage: background?.image, backdrop: backdrop, timeline: timeline)
+                backgroundImage: background?.image, backdrop: backdrop, timeline: timeline,
+                keys: pointers.keys.frame(at: time, timeline: timeline, style: edit.keystrokes))
             // 在渲染 actor 内完成像素输出，避免 SwiftUI 显示时才执行延迟合成和访问解码资源。
             guard let rendered = context.createCGImage(result, from: CGRect(origin: .zero, size: size), format: .RGBA8, colorSpace: CGColorSpace(name: CGColorSpace.sRGB), deferred: false) else {
                 throw ProjectError.invalid(String(localized: "无法渲染预览。"))

@@ -36,6 +36,8 @@ public struct RecordingOptions: Sendable {
     public var systemAudioApplicationBundleIDs: [String]?
     public var countdown = 3
     public var capturePointer = true
+    /// 记录按键的档位；需要输入监控权限，没有权限时这次录制不带按键。
+    public var keyCapture = KeyCaptureMode.off
     public var reconstructCursor = true
     public var region: CGRect?
     /// 录制帧率（24…120），默认 60：滚动与光标运动更顺滑，编码与回放都按同一帧率。
@@ -81,6 +83,7 @@ public final class ScreenRecorder {
     private var delegate: StreamDelegate?
     private var lease: ProjectLease?
     private var pointerRecorder: PointerRecorder?
+    private var keyRecorder: KeyRecorder?
     private var firstFrameTimeout: Task<Void, Never>?
     private var sessionID: UUID?
     /// 全屏 / 区域录制的显示器与当前过滤器排除的本应用窗口号；录制期间监视本应用窗口的增减。
@@ -230,6 +233,7 @@ public final class ScreenRecorder {
             initial.capture?.systemAudioApplicationBundleIDs = audioPlan.applicationBundleIDs
             initial.capture?.systemAudioEnabled = audioPlan.systemAudio
             initial.capture?.frameRate = frameRate
+            if options.keyCapture != .off, CGPreflightListenEventAccess() { initial.capture?.keyCapture = options.keyCapture.rawValue }
             let output = SegmentedCaptureWriter(project: project, width: dimensions.width, height: dimensions.height,
                 systemAudio: options.systemAudio, microphone: options.microphone, camera: options.camera, frameRate: frameRate,
                 onStarted: { [weak self] in
@@ -253,6 +257,10 @@ public final class ScreenRecorder {
                 let monitoring = pointer.start()
                 // 增强模式只在事件监听建立后隐藏原光标；监听失败时保留系统光标，基础录制仍可用。
                 config.showsCursor = !options.reconstructCursor || !monitoring
+            }
+            if options.keyCapture != .off {
+                let keys = KeyRecorder(mode: options.keyCapture, clock: CMClockGetHostTimeClock(), writer: output)
+                if keys.start() { keyRecorder = keys } else { NSLog("Caplo：没有输入监控权限，这次录制不记录按键") }
             }
             // 麦克风在本进程用 AVCaptureSession 采集：用户在控制中心选的麦克风模式（语音突显等）作用于本进程的采集，
             // 交给屏幕采集服务录麦克风时它不生效。录制时不做任何自己的处理，系统给什么就录什么；会话起不来退回屏幕采集流。
@@ -415,6 +423,7 @@ public final class ScreenRecorder {
         firstFrameTimeout?.cancel(); firstFrameTimeout = nil
         exclusionWatcher?.cancel(); exclusionWatcher = nil; sessionDisplayID = nil
         pointerRecorder?.stop(); pointerRecorder = nil
+        keyRecorder?.stop(); keyRecorder = nil
         if let microphoneObserver { NotificationCenter.default.removeObserver(microphoneObserver) }
         microphoneObserver = nil
         let stopTime = captureTime

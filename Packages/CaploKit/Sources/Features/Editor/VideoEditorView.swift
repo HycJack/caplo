@@ -19,6 +19,7 @@ struct VideoEditorView: View {
         RailItem(id: "遮罩", title: String(localized: "遮罩"), symbol: "rectangle.dashed", shortcut: "7"),
         RailItem(id: "文字", title: String(localized: "文字"), symbol: "text.alignleft", shortcut: "8"),
         RailItem(id: "字幕", title: String(localized: "字幕"), symbol: "captions.bubble", shortcut: "9"),
+        RailItem(id: "按键", title: String(localized: "按键"), symbol: "keyboard", shortcut: "0"),
     ]
 
     @State private var model: VideoEditorModel
@@ -101,7 +102,7 @@ struct VideoEditorView: View {
     private var disabledPanels: Set<String> {
         var result: Set<String> = []
         if !model.hasCameraMedia { result.insert("人像") }
-        if model.edit.clips.isEmpty { result.insert("遮罩"); result.insert("文字"); result.insert("字幕") }
+        if model.edit.clips.isEmpty { result.insert("遮罩"); result.insert("文字"); result.insert("字幕"); result.insert("按键") }
         return result
     }
 
@@ -116,6 +117,7 @@ struct VideoEditorView: View {
         case "遮罩": String(localized: "画面遮罩")
         case "文字": String(localized: "文字层")
         case "字幕": String(localized: "字幕")
+        case "按键": String(localized: "按键显示")
         default: tab
         }
     }
@@ -130,6 +132,7 @@ struct VideoEditorView: View {
         case "遮罩": MaskPanel(model: model)
         case "文字": TextPanel(model: model)
         case "字幕": CaptionPanel(model: model)
+        case "按键": KeystrokePanel(model: model)
         default: AudioPanel(model: model)
         }
     }

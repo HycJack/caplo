@@ -12,6 +12,8 @@ public struct SegmentRecord: Codable, Sendable, Equatable, Identifiable {
     public var id: Int
     public var duration: Double
     public var eventsPath: String?
+    /// 这一段的按键文件（`Events/000000-keys.json`）；没开"记录按键"或这段没按过键时为空。
+    public var keysPath: String?
     public var files: [MediaRole: String]
     /// 素材零时刻相对片段起点的偏移；缺省为零，兼容此前工程。
     /// 摄像头可能晚于屏幕提供首帧，偏移不能仅从容器 timeRange 推断。
@@ -35,6 +37,8 @@ public struct CaptureMetadata: Codable, Sendable {
     public var cursorEmbedded: Bool?
     /// 录制帧率；旧工程缺省按 30。
     public var frameRate: Double?
+    /// 录制时"记录按键"选的档位（`KeyCaptureMode` 的原始值）；旧工程与没开时为空。
+    public var keyCapture: String?
     public init(desktopBounds: CGRect, pixelSize: CGSize, pointPixelScale: Double, pointerEnabled: Bool) {
         self.desktopBounds = desktopBounds; self.pixelSize = pixelSize
         self.pointPixelScale = pointPixelScale; self.pointerEnabled = pointerEnabled

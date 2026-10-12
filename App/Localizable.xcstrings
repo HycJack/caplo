@@ -814,6 +814,17 @@
         }
       }
     },
+    "不读取键盘。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The keyboard is not read."
+          }
+        }
+      }
+    },
     "不透明度": {
       "extractionState": "manual",
       "localizations": {
@@ -1019,6 +1030,17 @@
           "stringUnit": {
             "state": "translated",
             "value": "Show in the menu bar only."
+          }
+        }
+      }
+    },
+    "仅快捷键": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Shortcuts Only"
           }
         }
       }
@@ -1276,6 +1298,17 @@
         }
       }
     },
+    "停留": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hold"
+          }
+        }
+      }
+    },
     "像素化": {
       "extractionState": "manual",
       "localizations": {
@@ -1503,6 +1536,17 @@
           "stringUnit": {
             "state": "translated",
             "value": "Restore All Defaults"
+          }
+        }
+      }
+    },
+    "全部按键": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "All Keys"
           }
         }
       }
@@ -2445,6 +2489,17 @@
         }
       }
     },
+    "只记带 ⌘ ⌃ ⌥ 的组合键与功能键，不记打字内容。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Records only combinations with ⌘ ⌃ ⌥ and function keys, never what you type."
+          }
+        }
+      }
+    },
     "可选": {
       "extractionState": "manual",
       "localizations": {
@@ -2771,6 +2826,17 @@
           "stringUnit": {
             "state": "translated",
             "value": "Pick a Window on Screen"
+          }
+        }
+      }
+    },
+    "在成片上显示按下的快捷键": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Show pressed shortcuts in the video"
           }
         }
       }
@@ -4549,6 +4615,17 @@
         }
       }
     },
+    "所有按键都会记下并可显示在成片上，录制时留意密码。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Every key is recorded and can appear in the video. Mind your passwords while recording."
+          }
+        }
+      }
+    },
     "所有素材只保存在这台 Mac 上。": {
       "extractionState": "manual",
       "localizations": {
@@ -4941,6 +5018,28 @@
           "stringUnit": {
             "state": "translated",
             "value": "Zoom in on clicks and smoothly follow the pointer"
+          }
+        }
+      }
+    },
+    "按键": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Keys"
+          }
+        }
+      }
+    },
+    "按键显示": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Keystrokes"
           }
         }
       }
@@ -6002,6 +6101,17 @@
         }
       }
     },
+    "显示哪些": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Show"
+          }
+        }
+      }
+    },
     "显示器": {
       "extractionState": "manual",
       "localizations": {
@@ -6031,6 +6141,17 @@
           "stringUnit": {
             "state": "translated",
             "value": "Show Recording Controls"
+          }
+        }
+      }
+    },
+    "显示按键": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Show Keystrokes"
           }
         }
       }
@@ -6894,6 +7015,17 @@
         }
       }
     },
+    "此录制没有按键。下次录制前在录制设置里打开“记录按键”。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This recording has no keystrokes. Turn on “Record Keys” in recording settings before the next one."
+          }
+        }
+      }
+    },
     "此录制没有摄像头素材。下次录制前可在录制条开启摄像头。": {
       "extractionState": "manual",
       "localizations": {
@@ -7147,6 +7279,17 @@
         }
       }
     },
+    "浅色": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Light"
+          }
+        }
+      }
+    },
     "浮点": {
       "extractionState": "manual",
       "localizations": {
@@ -7209,6 +7352,17 @@
           "stringUnit": {
             "state": "translated",
             "value": "Dark Gray"
+          }
+        }
+      }
+    },
+    "深色": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Dark"
           }
         }
       }
@@ -7638,6 +7792,17 @@
           "stringUnit": {
             "state": "translated",
             "value": "Video"
+          }
+        }
+      }
+    },
+    "画面上没有按键时显示 ⌘ K 作示例，仅在此面板可见。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "When no key is on screen, ⌘ K is shown as a sample, visible only in this panel."
           }
         }
       }
@@ -9050,6 +9215,28 @@
         }
       }
     },
+    "记录按键": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Record Keys"
+          }
+        }
+      }
+    },
+    "记录按键 · ": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Record Keys · "
+          }
+        }
+      }
+    },
     "设置": {
       "extractionState": "manual",
       "localizations": {
@@ -9552,6 +9739,17 @@
           "stringUnit": {
             "state": "translated",
             "value": "Loading Preview…"
+          }
+        }
+      }
+    },
+    "输入监控": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Input Monitoring"
           }
         }
       }

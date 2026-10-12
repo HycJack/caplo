@@ -50,6 +50,10 @@ enum PreviewFixture {
             try ProjectStorage.save(manifest, to: url)
         }
         try JSONEncoder().encode(events).write(to: url.appendingPathComponent(segment.eventsPath!), options: .atomic)
+        // 一次快捷键：第 2.4 秒的快照上正好停着 ⌘ ⇧ S。
+        segment.keysPath = "Events/000000-keys.json"
+        try JSONEncoder().encode([KeyPress(time: 2.1, keyCode: 1, modifiers: [.command, .shift], label: "s")])
+            .write(to: url.appendingPathComponent(segment.keysPath!), options: .atomic)
         try ProjectStorage.commit(segment, to: url); try ProjectStorage.complete(url)
         let document = try ProjectStorage.load(url)
         var edit = try EditStorage.load(in: url, document: document)

@@ -136,4 +136,25 @@ public enum EditStorage {
         }
         return result.sorted { $0.time < $1.time }
     }
+
+    /// 全部片段的按键，换算到工程时间。与指针事件同样的规则：路径限制在 `Events/` 内，哪一段读不出来就跳过哪一段。
+    /// 整个录制最后 0.4 秒里的按键不要：那多半是按下去结束录制的快捷键。
+    public static func keys(in url: URL, document: ProjectDocument) -> [KeyPress] {
+        var result: [KeyPress] = [], cursor = 0.0
+        let root = url.resolvingSymlinksInPath().standardizedFileURL.path + "/Events/"
+        for segment in document.segments.sorted(by: { $0.id < $1.id }) {
+            defer { cursor += segment.duration }
+            guard let path = segment.keysPath else { continue }
+            let file = url.appendingPathComponent(path).resolvingSymlinksInPath().standardizedFileURL
+            guard path.hasPrefix("Events/"), !path.contains(".."), file.path.hasPrefix(root),
+                  let data = try? Data(contentsOf: file), let presses = try? JSONDecoder().decode([KeyPress].self, from: data) else {
+                NSLog("Caplo：跳过读不出来的按键文件 %@", path); continue
+            }
+            for var press in presses where press.isValid && press.time < segment.duration {
+                press.time += cursor; result.append(press)
+            }
+        }
+        let end = cursor - 0.4
+        return result.filter { $0.time < end }.sorted { $0.time < $1.time }
+    }
 }

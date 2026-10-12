@@ -1,6 +1,7 @@
 import SwiftUI
 import AppKit
 import CaptureKit
+import EditingCore
 import CaploDesignSystem
 
 /// 录制动作读取持久化选择的同一快照，避免界面显示选择了设备、引擎却仍用默认输入。
@@ -12,6 +13,25 @@ enum RecordingAudioPreferences {
             let data = defaults.data(forKey: "recording.systemAudioApplications") ?? Data()
             options.systemAudioApplicationBundleIDs = (try? JSONDecoder().decode([String].self, from: data)) ?? []
         } else { options.systemAudioApplicationBundleIDs = nil }
+    }
+}
+
+/// "记录按键"的档位。默认关：打开它才会用到输入监控权限。
+enum RecordingKeyPreferences {
+    static let key = "recording.keyCapture"
+    static func mode(defaults: UserDefaults = .standard) -> KeyCaptureMode {
+        KeyCaptureMode(rawValue: defaults.string(forKey: key) ?? "") ?? .off
+    }
+    /// 选了要记按键的一档就顺手把权限要了：第一次弹系统提示，拒绝过则打开权限窗口定位到那一行。
+    @MainActor static func requestAccessIfNeeded(for mode: KeyCaptureMode) {
+        guard mode != .off, PermissionsWindow.enforced else { return }
+        let center = PermissionCenter.shared
+        center.refresh()
+        switch center.status(.keyboard) {
+        case .granted: break
+        case .notDetermined: center.request(.keyboard)
+        default: PermissionsWindow.shared.show(.standalone, focus: .keyboard)
+        }
     }
 }
 
