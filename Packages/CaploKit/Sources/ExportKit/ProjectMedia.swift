@@ -302,7 +302,7 @@ public enum ProjectMedia {
         return CIImage(cgImage: image)
     }
 
-    private static func videoComposition(composition: AVMutableComposition, edit: VideoEdit, shortEdge: Int, pointers: PointerTimeline, backgroundImage: CIImage? = nil, frameRate: Double = 30, reusing previous: SceneInstruction? = nil) throws -> AVVideoComposition {
+    private static func videoComposition(composition: AVMutableComposition, edit: VideoEdit, shortEdge: Int, pointers: PointerTimeline, backgroundImage: CIImage? = nil, frameRate: Double = 30, segmentation: PersonSegmenter.Quality = .balanced, reusing previous: SceneInstruction? = nil) throws -> AVVideoComposition {
         guard let track = composition.track(withTrackID: trackID(for: .screen)), edit.duration > 0 else { throw ProjectError.invalid(String(localized: "时间线为空，请先恢复一个片段。")) }
         let video = AVMutableVideoComposition()
         video.customVideoCompositorClass = VideoCompositor.self
@@ -311,7 +311,7 @@ public enum ProjectMedia {
         }
         let screens = routes.filter { $0.trackID == 1 || ($0.trackID >= 5 && $0.trackID % 2 == 1) }
         let cameras = edit.camera?.enabled == true ? routes.filter { $0.trackID >= 4 && $0.trackID % 2 == 0 } : []
-        video.instructions = [SceneInstruction(trackID: track.trackID, edit: edit, screenRoutes: screens, cameraRoutes: cameras, pointers: pointers, backgroundImage: backgroundImage, reusing: previous)]
+        video.instructions = [SceneInstruction(trackID: track.trackID, edit: edit, screenRoutes: screens, cameraRoutes: cameras, pointers: pointers, backgroundImage: backgroundImage, segmentation: segmentation, reusing: previous)]
         // 短边按所选分辨率（720 / 1080 / 1440 / 2160），长边按比例伸展：方形以此为边长，横竖屏得到标准尺寸。
         let size = edit.layout.outputSize(shortEdge: shortEdge)
         video.renderSize = CGSize(width: size.width, height: size.height)
@@ -362,7 +362,7 @@ public enum ProjectMedia {
         else { timeline = PointerTimeline(events: []) }
         let layout = edit?.layout
         nonisolated(unsafe) let background = await Task.detached(priority: .userInitiated) { layout.flatMap { backgroundImage(for: $0, in: url) } }.value
-        let video = try edit.map { try videoComposition(composition: composition, edit: $0, shortEdge: settings.resolution.rawValue, pointers: timeline, backgroundImage: background, frameRate: rate) }
+        let video = try edit.map { try videoComposition(composition: composition, edit: $0, shortEdge: settings.resolution.rawValue, pointers: timeline, backgroundImage: background, frameRate: rate, segmentation: .accurate) }
         let folder = destination.deletingLastPathComponent()
         removeStaleTemporaryFiles(in: folder)
         let temporary = folder.appendingPathComponent(".caplo-export-\(UUID()).\(settings.format.fileExtension)")

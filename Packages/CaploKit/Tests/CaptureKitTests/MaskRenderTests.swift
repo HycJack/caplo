@@ -84,3 +84,44 @@ func maskDestroysDetailInsideAndTouchesNothingOutside(effect: MaskSegment.Effect
     #expect(changed == 0, "遮罩外有 \(changed) 个像素被改动了")
 }
 
+
+/// 人像背景：蒙版里的人一个像素都不改；蒙版外，虚化后细节没了，移除后变透明（透出人像下面那一层）。
+/// 分割器对同一帧只算一次，蒙版对齐到这一帧的大小。
+@Test func portraitSurroundingsKeepThePersonAndChangeOnlyWhatIsBehind() throws {
+    let camera = checkerboard(width: 640, height: 360)
+    // 左半边当作"人"。
+    let mask = CIImage(color: CIColor(red: 1, green: 0, blue: 0)).cropped(to: CGRect(x: 0, y: 0, width: 320, height: 360))
+        .composited(over: CIImage(color: CIColor(red: 0, green: 0, blue: 0)).cropped(to: camera.extent))
+    let person = CGRect(x: 40, y: 40, width: 240, height: 280), behind = CGRect(x: 360, y: 40, width: 240, height: 280)
+    let plain = pixels(camera, bounds: camera.extent)
+    var layout = CameraLayout()
+    #expect(SceneRenderer.portrait(camera, mask: mask, layout: layout) === camera, "原始背景不该动画面")
+
+    layout.surroundings = .blurred; layout.surroundingsBlur = 1
+    let blurred = pixels(SceneRenderer.portrait(camera, mask: mask, layout: layout), bounds: camera.extent)
+    #expect(abs(blurred.edgeDensity(in: person) - plain.edgeDensity(in: person)) < 0.005)
+    #expect(blurred.edgeDensity(in: behind) < 0.01)
+
+    layout.surroundings = .removed
+    let removed = pixels(SceneRenderer.portrait(camera, mask: mask, layout: layout), bounds: camera.extent)
+    func alpha(_ bitmap: Bitmap, x: Int, y: Int) -> Int { Int(bitmap.bytes[(y * bitmap.width + x) * 4 + 3]) }
+    #expect(alpha(removed, x: 160, y: 180) == 255 && alpha(removed, x: 480, y: 180) == 0)
+    #expect(abs(removed.edgeDensity(in: person) - plain.edgeDensity(in: person)) < 0.005)
+    // 模型失败拿不到蒙版时照原样画，不能把整个人像弄没。
+    #expect(SceneRenderer.portrait(camera, mask: nil, layout: layout) === camera)
+
+    // 旧工程没有这两个字段：背景保持原样；新字段能存能取。
+    var json = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(layout)) as? [String: Any])
+    #expect(try JSONDecoder().decode(CameraLayout.self, from: JSONSerialization.data(withJSONObject: json)).surroundings == .removed)
+    json["surroundings"] = nil; json["surroundingsBlur"] = nil
+    #expect(try JSONDecoder().decode(CameraLayout.self, from: JSONSerialization.data(withJSONObject: json)).surroundings == .original)
+
+    var buffer: CVPixelBuffer?
+    CVPixelBufferCreate(nil, 640, 360, kCVPixelFormatType_32BGRA, [kCVPixelBufferIOSurfacePropertiesKey: [:] as CFDictionary] as CFDictionary, &buffer)
+    let frame = try #require(buffer)
+    let segmenter = PersonSegmenter(quality: .balanced)
+    let first = try #require(segmenter.mask(for: frame))
+    #expect(first.extent == CGRect(x: 0, y: 0, width: 640, height: 360))
+    _ = segmenter.mask(for: frame)
+    #expect(segmenter.performed == 1, "同一帧摄像头画面重复送来时不该再跑一遍模型")
+}

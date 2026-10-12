@@ -23,6 +23,9 @@ public struct CameraLayout: Codable, Equatable, Sendable {
             }
         }
     }
+    /// 人身后的背景怎么处理：原样、虚化、整个去掉只留人（靠人像分割，见 RenderKit 的 `PersonSegmenter`）。
+    /// 只在后期合成里做，录下来的摄像头画面不动，随时可以换回原样。
+    public enum Surroundings: String, Codable, CaseIterable, Sendable { case original, blurred, removed }
     public var enabled = true
     public var mode: Mode = .overlay
     public var shape: Shape = .circle
@@ -43,7 +46,13 @@ public struct CameraLayout: Codable, Equatable, Sendable {
     /// 叠放时随镜头聚焦缩小：推近过程中按同一条包络缩到 `focusedScale` 倍并淡到 85 %，拉远时放回来。
     public var shrinkOnFocus = true
     public var focusedScale = 0.7
+    public var surroundings: Surroundings = .original
+    /// 虚化强度（0…1）：1 时模糊半径约为摄像头画面短边的 4 %。
+    public var surroundingsBlur = 0.5
     public init() {}
+
+    /// 这一帧的人像要不要先做人像分割。
+    public var needsSegmentation: Bool { enabled && surroundings != .original }
 
     public var isSide: Bool { mode == .sideLeading || mode == .sideTrailing }
     public var isBehind: Bool { mode == .behindLeading || mode == .behindTrailing }
@@ -73,6 +82,7 @@ public struct CameraLayout: Codable, Equatable, Sendable {
             && aspect.isFinite && (0.25...4).contains(aspect)
             && focusedScale.isFinite && (0.4...1).contains(focusedScale) && sideHeight.isFinite && (0.4...1).contains(sideHeight)
             && cornerRadius.isFinite && (0...0.5).contains(cornerRadius)
+            && surroundingsBlur.isFinite && (0...1).contains(surroundingsBlur)
     }
 
     /// 聚焦到 `progress`（0…1）时的人像矩形：以停靠点为锚缩放（右下角的人像缩小后仍贴右下角），关掉缩小就是原矩形。
@@ -193,7 +203,7 @@ public struct CameraLayout: Codable, Equatable, Sendable {
     }
 
     // 旧工程没有 mode 字段：缺省为叠放。
-    private enum CodingKeys: String, CodingKey { case enabled, mode, shape, size, sideHeight, x, y, mirrored, shadow, cornerRadius, aspect, belowScreen, shrinkOnFocus, focusedScale }
+    private enum CodingKeys: String, CodingKey { case enabled, mode, shape, size, sideHeight, x, y, mirrored, shadow, cornerRadius, aspect, belowScreen, shrinkOnFocus, focusedScale, surroundings, surroundingsBlur }
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         enabled = try container.decode(Bool.self, forKey: .enabled)
@@ -211,5 +221,8 @@ public struct CameraLayout: Codable, Equatable, Sendable {
         belowScreen = try container.decodeIfPresent(Bool.self, forKey: .belowScreen) ?? false
         shrinkOnFocus = try container.decodeIfPresent(Bool.self, forKey: .shrinkOnFocus) ?? true
         focusedScale = try container.decodeIfPresent(Double.self, forKey: .focusedScale) ?? 0.7
+        // 旧工程没有这两项：背景保持原样。
+        surroundings = try container.decodeIfPresent(Surroundings.self, forKey: .surroundings) ?? .original
+        surroundingsBlur = try container.decodeIfPresent(Double.self, forKey: .surroundingsBlur) ?? 0.5
     }
 }

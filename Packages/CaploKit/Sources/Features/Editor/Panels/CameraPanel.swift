@@ -2,7 +2,7 @@ import SwiftUI
 import CaploDesignSystem
 import EditingCore
 
-/// 摄像头画中画：显示、布局缩略图（叠放四角 / 分屏两侧）、大小与位置、镜像与阴影。
+/// 摄像头画中画：显示、布局缩略图（叠放四角 / 分屏两侧）、人像背景（原始 / 虚化 / 移除）、大小与位置、镜像与阴影。
 struct CameraPanel: View {
     let model: VideoEditorModel
     @State private var customizing = false
@@ -89,6 +89,20 @@ struct CameraPanel: View {
                         }
                     }
                 }
+                // 人身后的房间：原样、虚化，或整个去掉只留人。靠系统的人像分割在合成时做，录下来的画面不动。
+                PanelSection(String(localized: "人像背景")) {
+                    let surroundings = model.edit.camera?.surroundings ?? .original
+                    SegmentedBar(CameraLayout.Surroundings.allCases, selection: Binding(get: { surroundings }, set: { value in model.commit { $0.camera?.surroundings = value } })) {
+                        switch $0 {
+                        case .original: String(localized: "原始")
+                        case .blurred: String(localized: "虚化")
+                        case .removed: String(localized: "移除")
+                        }
+                    }
+                    if surroundings == .blurred {
+                        EditorFill(model: model, title: String(localized: "虚化强度"), value: binding(\.surroundingsBlur), range: 0.1...1, suffix: "%", percentage: true, defaultValue: 0.5)
+                    }
+                }
                 PanelSection(String(localized: "调整")) {
                     let layout = model.edit.camera ?? CameraLayout()
                     HStack(spacing: CaploMetrics.Spacing.s) {
@@ -131,7 +145,8 @@ struct CameraPanel: View {
                     Toggle(isOn: Binding(get: { model.edit.camera?.mirrored == true }, set: { value in model.commit { $0.camera?.mirrored = value } })) {
                         SettingLabel(String(localized: "镜像"), systemImage: "arrow.left.and.right.righttriangle.left.righttriangle.right")
                     }.toggleStyle(StudioToggleStyle())
-                    if !layout.ignoresFocus {
+                    // 背景移除后没有卡片，也就没有卡片的阴影。
+                    if !layout.ignoresFocus, layout.surroundings != .removed {
                         Toggle(isOn: Binding(get: { model.edit.camera?.shadow == true }, set: { value in model.commit { $0.camera?.shadow = value } })) {
                             SettingLabel(String(localized: "阴影"), systemImage: "square.3.layers.3d")
                         }.toggleStyle(StudioToggleStyle())

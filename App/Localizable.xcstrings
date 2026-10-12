@@ -1012,6 +1012,17 @@
         }
       }
     },
+    "人像背景": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Camera background"
+          }
+        }
+      }
+    },
     "人像高度": {
       "extractionState": "manual",
       "localizations": {
@@ -8346,6 +8357,17 @@
         }
       }
     },
+    "移除": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Remove"
+          }
+        }
+      }
+    },
     "移除图片": {
       "extractionState": "manual",
       "localizations": {
@@ -9365,6 +9387,28 @@
           "stringUnit": {
             "state": "translated",
             "value": "Mint Jelly"
+          }
+        }
+      }
+    },
+    "虚化": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Blur"
+          }
+        }
+      }
+    },
+    "虚化强度": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Blur strength"
           }
         }
       }

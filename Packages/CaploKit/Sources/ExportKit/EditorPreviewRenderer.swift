@@ -57,7 +57,9 @@ public actor EditorPreviewRenderer {
             // 缓存里存的若是"只有阴影的透明层"，离线预览就会整幅背景消失。
             let backdrop = backdrops.backdrop(edit: edit, sourceSize: SceneRenderer.croppedSourceSize(sourceImage?.extent.size ?? size, layout: edit.layout),
                                               size: size, backgroundImage: background?.image, hasCamera: camera != nil, context: context)
-            let result = SceneRenderer.frame(source: sourceImage, edit: renderedEdit, time: time, size: size, camera: camera,
+            // 静帧同样要分割：不然背景虚化 / 移除在缩略图和暂停时的离线预览里看不到。
+            let cameraMask = edit.camera?.needsSegmentation == true ? camera.flatMap { PersonSegmenter.mask(for: $0) } : nil
+            let result = SceneRenderer.frame(source: sourceImage, edit: renderedEdit, time: time, size: size, camera: camera, cameraMask: cameraMask,
                 pointer: clipHidesCursor ? PointerFrame() : pointers.frame(at: time, timeline: timeline, effects: edit.pointer),
                 backgroundImage: background?.image, backdrop: backdrop, timeline: timeline,
                 keys: pointers.keys.frame(at: time, timeline: timeline, style: edit.keystrokes))

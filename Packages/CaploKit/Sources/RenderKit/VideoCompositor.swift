@@ -48,8 +48,11 @@ public final class SceneInstruction: NSObject, AVVideoCompositionInstructionProt
     /// 设了裁切时换算到裁切区域的镜头（含整条运镜路径）。指令建立时算一次，逐帧直接用；
     /// 以前每一帧都把全部镜头连同十几万个关键帧重新换算一遍。没有裁切时为 nil。
     public let croppedFocuses: [FocusSegment]?
-    public init(trackID: CMPersistentTrackID, edit: VideoEdit, cameraTrackID: CMPersistentTrackID? = nil, cameraRanges: [CMTimeRange] = [], screenRoutes: [VideoTrackRange] = [], cameraRoutes: [VideoTrackRange] = [], pointers: PointerTimeline = PointerTimeline(events: []), backgroundImage: CIImage? = nil, reusing previous: SceneInstruction? = nil) {
+    /// 人像分割用哪一档：播放用均衡档，导出用精确档（见 `PersonSegmenter.Quality`）。
+    public let segmentation: PersonSegmenter.Quality
+    public init(trackID: CMPersistentTrackID, edit: VideoEdit, cameraTrackID: CMPersistentTrackID? = nil, cameraRanges: [CMTimeRange] = [], screenRoutes: [VideoTrackRange] = [], cameraRoutes: [VideoTrackRange] = [], pointers: PointerTimeline = PointerTimeline(events: []), backgroundImage: CIImage? = nil, segmentation: PersonSegmenter.Quality = .balanced, reusing previous: SceneInstruction? = nil) {
         self.trackID = trackID
+        self.segmentation = segmentation
         // 指令建立时一次规划；实时播放器与导出逐帧求值同一不可变路径。
         let plan = FocusPlan(edit)
         self.plan = plan
@@ -148,6 +151,8 @@ public final class VideoCompositor: NSObject, AVVideoCompositing, @unchecked Sen
     private let context = CIContext(options: [.cacheIntermediates: false, .workingColorSpace: CGColorSpace(name: CGColorSpace.sRGB)!])
     /// 背景与阴影只在布局变化时重画；只在渲染队列上访问。
     private let backdrops = SceneBackdropCache()
+    /// 人像分割器，用到才建；只在渲染队列上访问。
+    private var segmenter: PersonSegmenter?
     public var sourcePixelBufferAttributes: [String: any Sendable]? { [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA] }
     public var requiredPixelBufferAttributesForRenderContext: [String: any Sendable] {
         [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA, kCVPixelBufferIOSurfacePropertiesKey as String: [String: String]()]
@@ -164,13 +169,18 @@ public final class VideoCompositor: NSObject, AVVideoCompositing, @unchecked Sen
                     request.finish(with: NSError(domain: "Caplo.Render", code: 1, userInfo: [NSLocalizedDescriptionKey: String(localized: "无法读取合成画面。")])); return
                 }
                 let size = CGSize(width: CVPixelBufferGetWidth(output), height: CVPixelBufferGetHeight(output))
-                let camera = instruction.cameraSource(at: request.compositionTime)
-                    .flatMap { request.sourceFrame(byTrackID: $0) }.map { CIImage(cvPixelBuffer: $0) }
+                let cameraBuffer = instruction.cameraSource(at: request.compositionTime).flatMap { request.sourceFrame(byTrackID: $0) }
+                let camera = cameraBuffer.map { CIImage(cvPixelBuffer: $0) }
+                var cameraMask: CIImage?
+                if let cameraBuffer, instruction.edit.camera?.needsSegmentation == true {
+                    if segmenter?.quality != instruction.segmentation { segmenter = PersonSegmenter(quality: instruction.segmentation) }
+                    cameraMask = segmenter?.mask(for: cameraBuffer)
+                }
                 let sourceImage = instruction.screenSource(at: request.compositionTime).flatMap { request.sourceFrame(byTrackID: $0) }.map { CIImage(cvPixelBuffer: $0) }
                 let backdrop = backdrops.backdrop(edit: instruction.edit, sourceSize: SceneRenderer.croppedSourceSize(sourceImage?.extent.size ?? size, layout: instruction.edit.layout),
                                                   size: size, backgroundImage: instruction.backgroundImage,
                                                   hasCamera: camera != nil, context: context)
-                let image = SceneRenderer.frame(source: sourceImage, edit: instruction.edit, time: request.compositionTime.seconds, size: size, camera: camera, pointer: instruction.pointerFrame(at: request.compositionTime.seconds), backgroundImage: instruction.backgroundImage, backdrop: backdrop, timeline: instruction.timeline, croppedFocuses: instruction.croppedFocuses,
+                let image = SceneRenderer.frame(source: sourceImage, edit: instruction.edit, time: request.compositionTime.seconds, size: size, camera: camera, cameraMask: cameraMask, pointer: instruction.pointerFrame(at: request.compositionTime.seconds), backgroundImage: instruction.backgroundImage, backdrop: backdrop, timeline: instruction.timeline, croppedFocuses: instruction.croppedFocuses,
                                                 keys: instruction.keyFrame(at: request.compositionTime.seconds))
                 // 输出按 BT.709 编码并在帧上标明：导出文件的色彩标签是 BT.709，像素就必须按 BT.709 曲线写。
                 // 以前按 sRGB 曲线写、却标成 BT.709，播放器按 BT.709 解读时暗部与中间调整体提亮约 10 个色阶，画面发灰。
@@ -344,8 +354,9 @@ public enum SceneRenderer {
     /// `backdrop`：缓存好的"背景 + 阴影"；人像在后时缓存的是只有阴影的透明图层（见 `SceneBackdropCache`）。
     /// `croppedFocuses`：调用方预先换算好的裁切后镜头（见 `SceneInstruction.croppedFocuses`）；不传就当场换算，结果相同。
     /// `keys`：这一帧要显示的按键（见 `KeyTimeline.frame`）；画在最上面，不跟着镜头、版式变换走。
-    public static func frame(source full: CIImage?, edit: VideoEdit, time: Double, size: CGSize, camera: CIImage? = nil, pointer: PointerFrame = PointerFrame(), backgroundImage: CIImage? = nil, backdrop: CIImage? = nil, timeline: TimelineIndex? = nil, croppedFocuses: [FocusSegment]? = nil, keys: KeystrokeFrame? = nil) -> CIImage {
-        let picture = scene(source: full, edit: edit, time: time, size: size, camera: camera, pointer: pointer, backgroundImage: backgroundImage,
+    /// `cameraMask`：这一帧摄像头画面的人像蒙版（见 `PersonSegmenter`）；人像背景设为虚化或移除时才需要，不传就照原样画。
+    public static func frame(source full: CIImage?, edit: VideoEdit, time: Double, size: CGSize, camera: CIImage? = nil, cameraMask: CIImage? = nil, pointer: PointerFrame = PointerFrame(), backgroundImage: CIImage? = nil, backdrop: CIImage? = nil, timeline: TimelineIndex? = nil, croppedFocuses: [FocusSegment]? = nil, keys: KeystrokeFrame? = nil) -> CIImage {
+        let picture = scene(source: full, edit: edit, time: time, size: size, camera: camera.map { portrait($0, mask: cameraMask, layout: edit.camera) }, pointer: pointer, backgroundImage: backgroundImage,
                             backdrop: backdrop, timeline: timeline, croppedFocuses: croppedFocuses)
         // 水印压在画面、文字与字幕之上，按键再压在水印之上（按键只出现一两秒，不该被挡）。
         var result = picture
@@ -354,6 +365,25 @@ public enum SceneRenderer {
         }
         if let keys, let layer = KeystrokeRenderer.shared.image(for: keys, canvas: size) { result = layer.composited(over: result) }
         return result === picture ? picture : result.cropped(to: CGRect(origin: .zero, size: size))
+    }
+
+    /// 按人像蒙版处理摄像头画面里人身后的部分：虚化是把清楚的人叠回糊掉的整幅画面上，移除是把背景变透明。
+    /// 之后的摆放、裁形状、阴影都照常走，所以六种布局不用各写一遍；移除后透出来的就是人像下面那一层（录屏或画布背景）。
+    static func portrait(_ camera: CIImage, mask: CIImage?, layout: CameraLayout?) -> CIImage {
+        guard let layout, layout.needsSegmentation, let mask else { return camera }
+        let extent = camera.extent
+        let behind: CIImage
+        switch layout.surroundings {
+        case .original: return camera
+        case .blurred:
+            let sigma = min(extent.width, extent.height) * 0.04 * min(1, max(0, layout.surroundingsBlur))
+            guard sigma > 0.3 else { return camera }
+            // 先把边缘向外延伸再糊：不然四周会被透明像素拉淡。
+            behind = camera.clampedToExtent().applyingGaussianBlur(sigma: sigma).cropped(to: extent)
+        case .removed:
+            behind = CIImage(color: CIColor(red: 0, green: 0, blue: 0, alpha: 0)).cropped(to: extent)
+        }
+        return camera.applyingFilter("CIBlendWithRedMask", parameters: [kCIInputBackgroundImageKey: behind, kCIInputMaskImageKey: mask]).cropped(to: extent)
     }
 
     private static func scene(source full: CIImage?, edit: VideoEdit, time: Double, size: CGSize, camera: CIImage?, pointer: PointerFrame, backgroundImage: CIImage?, backdrop: CIImage?, timeline: TimelineIndex?, croppedFocuses: [FocusSegment]?) -> CIImage {
@@ -565,7 +595,8 @@ public enum SceneRenderer {
         }
         var base = background
         // 垫在录屏下面的人像（在后、全屏）不画自己的阴影；分屏的卡片跟随画面布局的阴影设置。
-        if layout.isSplit ? edit.layout.shadow : (layout.shadow && !layout.underScreen) {
+        // 背景移除后已经没有卡片了，只剩一个人，卡片形状的阴影不画。
+        if layout.surroundings != .removed, layout.isSplit ? edit.layout.shadow : (layout.shadow && !layout.underScreen) {
             if let analytic = CardShape.shadow(rect: rect, radius: radius, blur: rect.width * 0.09, offset: rect.width * 0.025, opacity: 0.28 * opacity, bounds: bounds) {
                 base = analytic.composited(over: base)
             } else {
