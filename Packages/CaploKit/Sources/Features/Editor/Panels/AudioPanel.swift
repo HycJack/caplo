@@ -1,6 +1,7 @@
 import SwiftUI
 import CaploDesignSystem
 import EditingCore
+import ExportKit
 
 /// 声音混合：系统声音与麦克风的音量、静音、独奏；与轨头按钮同步。
 /// 时间线上选中某一块声音时，最上面多一组"这一块"的音量（原"片段设置"里唯一真正用得上的一项，2026-10-06 并进来）。
@@ -21,6 +22,50 @@ struct AudioPanel: View {
         return model.edit.clips.first { $0.id == id && $0.card == nil }
     }
 
+    // 去除静音的参数记在偏好里。门槛存的是"比底噪高多少分贝"：换一个底噪不同的工程，同一个设置照样合适。
+    @AppStorage("editor.silence.margin") private var silenceMargin = 8.0
+    @AppStorage("editor.silence.pause") private var silencePause = 0.8
+    @AppStorage("editor.silence.microphoneOnly") private var silenceMicrophoneOnly = false
+    private static let silenceMarginRange = 2.0...30.0
+
+    /// 这段录制的底噪加上余量，就是"低于它算安静"的电平。
+    private var silenceThreshold: Double {
+        let range = SilenceDetector.Options.thresholdRange
+        let floor = SilenceDetector.noiseFloor(edit: model.edit, analysis: model.analysis, microphoneOnly: silenceMicrophoneOnly)
+        return min(range.upperBound, max(range.lowerBound, floor + min(max(silenceMargin, Self.silenceMarginRange.lowerBound), Self.silenceMarginRange.upperBound)))
+    }
+    private var silenceOptions: SilenceDetector.Options {
+        var options = SilenceDetector.Options()
+        options.threshold = silenceThreshold
+        options.minimumPause = min(max(silencePause, SilenceDetector.Options.pauseRange.lowerBound), SilenceDetector.Options.pauseRange.upperBound)
+        options.microphoneOnly = silenceMicrophoneOnly
+        return options
+    }
+
+    /// 去除静音：参数一动，下面那句"找到几段、共多少秒"跟着变，看准了再点。
+    @ViewBuilder private var silenceSection: some View {
+        let audible = SilenceDetector.audibleTracks(edit: model.edit, analysis: model.analysis)
+        let ranges = model.silenceRanges(silenceOptions)
+        let total = ranges.reduce(0) { $0 + $1.upperBound - $1.lowerBound }
+        PanelSection(String(localized: "去除静音"), info: String(localized: "剪掉没有声音的停顿，后面的内容接上来")) {
+            // 滑的是余量，显示的是换算出来的实际电平：往右越容易被当成安静，剪得越多。
+            let threshold = silenceThreshold
+            FillSlider(String(localized: "安静阈值"), value: $silenceMargin, in: Self.silenceMarginRange, defaultValue: 8,
+                       format: { _ in "\(Int(threshold.rounded())) dB" })
+            EditorStepper(model: model, title: String(localized: "最短停顿"), value: $silencePause, range: SilenceDetector.Options.pauseRange, step: 0.1, defaultValue: 0.8)
+            if audible.count > 1 {
+                Toggle("只按麦克风判断", isOn: $silenceMicrophoneOnly).toggleStyle(StudioToggleStyle())
+            }
+            if model.analysis.system.isEmpty && model.analysis.microphone.isEmpty { PanelNote(String(localized: "正在读取声音。")) }
+            else if audible.isEmpty { PanelNote(String(localized: "声音都已静音，无法判断停顿。")) }
+            else if ranges.isEmpty { PanelNote(String(localized: "没有找到够长的停顿。")) }
+            else { PanelNote(String(localized: "找到 \(ranges.count) 段停顿，共 \(String(format: "%.1f", total)) 秒。")) }
+            Button("去除静音") { model.removeSilence(ranges) }
+                .buttonStyle(StudioButtonStyle(.secondary, size: .small))
+                .disabled(ranges.isEmpty)
+        }
+    }
+
     var body: some View {
         if !model.audioTracks.isEmpty {
             PanelSection(String(localized: "剪辑")) {
@@ -31,6 +76,7 @@ struct AudioPanel: View {
                 PanelNote(model.audioFollowsPicture ? String(localized: "切开、拖动、删除画面时声音一起走。要单独剪声音就关掉。") : String(localized: "声音单独成轨。打开会丢掉单独做过的声音剪辑。"))
             }
         }
+        if !model.audioTracks.isEmpty { silenceSection }
         if let block = selectedBlock {
             let trackName = block.track == .system ? String(localized: "系统声音") : String(localized: "麦克风")
             PanelSection(String(localized: "选中的\(trackName)块 \(block.number)"), info: String(localized: "与轨道音量相乘，仅作用于此块")) {

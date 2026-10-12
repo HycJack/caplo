@@ -2159,6 +2159,17 @@
         }
       }
     },
+    "剪掉没有声音的停顿，后面的内容接上来": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cuts silent pauses and closes the gaps"
+          }
+        }
+      }
+    },
     "剪辑": {
       "extractionState": "manual",
       "localizations": {
@@ -2309,6 +2320,17 @@
           "stringUnit": {
             "state": "translated",
             "value": "Source %@ – %@"
+          }
+        }
+      }
+    },
+    "去除静音": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Remove Silence"
           }
         }
       }
@@ -2474,6 +2496,17 @@
           "stringUnit": {
             "state": "translated",
             "value": "Record a single window"
+          }
+        }
+      }
+    },
+    "只按麦克风判断": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Microphone Only"
           }
         }
       }
@@ -3094,6 +3127,17 @@
         }
       }
     },
+    "声音都已静音，无法判断停顿。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "All audio is muted, so pauses can’t be detected."
+          }
+        }
+      }
+    },
     "处理失败：%@": {
       "extractionState": "manual",
       "localizations": {
@@ -3387,6 +3431,17 @@
           "stringUnit": {
             "state": "translated",
             "value": "Install and Relaunch"
+          }
+        }
+      }
+    },
+    "安静阈值": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Silence Threshold"
           }
         }
       }
@@ -4809,6 +4864,17 @@
           "stringUnit": {
             "state": "translated",
             "value": "Open the Project Center to keep editing your last recording, or export it right away."
+          }
+        }
+      }
+    },
+    "找到 %lld 段停顿，共 %@ 秒。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Found %lld pauses, %@ s in total."
           }
         }
       }
@@ -6398,6 +6464,17 @@
         }
       }
     },
+    "最短停顿": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Minimum Pause"
+          }
+        }
+      }
+    },
     "最短时长": {
       "extractionState": "manual",
       "localizations": {
@@ -6960,6 +7037,17 @@
         }
       }
     },
+    "正在读取声音。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Reading audio."
+          }
+        }
+      }
+    },
     "正在转写…": {
       "extractionState": "manual",
       "localizations": {
@@ -7154,6 +7242,17 @@
           "stringUnit": {
             "state": "translated",
             "value": "No Matching Projects"
+          }
+        }
+      }
+    },
+    "没有找到够长的停顿。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No pauses long enough were found."
           }
         }
       }

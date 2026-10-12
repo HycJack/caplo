@@ -474,6 +474,18 @@ final class VideoEditorModel {
         let limit = pinned ? max(edit.duration, duration) : entry.document.duration
         return max(0, min(start + duration, limit - duration))
     }
+    /// 当前参数下可以剪掉的停顿（成片时间）。波形还没读完时为空。
+    func silenceRanges(_ options: SilenceDetector.Options) -> [Range<Double>] {
+        guard ready else { return [] }
+        return SilenceDetector.ranges(edit: edit, analysis: analysis, options: options)
+    }
+    /// 去除静音：把这些停顿剪掉并合拢，画面、人像、声音一起剪。一步撤销。
+    func removeSilence(_ ranges: [Range<Double>]) {
+        guard ready, !ranges.isEmpty else { return }
+        pause()
+        commit { $0.cutTimelineRanges(ranges) }
+        if position > edit.duration { seek(edit.duration) }
+    }
     /// 声音是否跟着画面走（默认）。任一条录到的声音还单独成轨就算"已分离"。
     var audioFollowsPicture: Bool {
         let recorded = audioTracks.map { $0 == .system ? TimelineMedia.system : .microphone }

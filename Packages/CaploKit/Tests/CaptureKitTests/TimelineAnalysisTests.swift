@@ -49,3 +49,28 @@ import ProjectKit
     #expect(again.system == analysis.system && again.microphone.isEmpty, "一个文件缺失让整条波形都没了")
 }
 
+
+/// 去除静音：够长的停顿两头留边后才剪，短停顿不动，贴着片尾的停顿剪到底；静音的轨不算数。
+@Test func silenceDetectorFindsLongPausesAndLeavesPaddingAroundSpeech() throws {
+    // 10 秒麦克风：0–2、5–6、6.5–8 秒有声，2–5 秒长停顿，6–6.5 秒短停顿，8 秒起一直安静到结尾。
+    let peaks = (0..<1000).map { bin -> Float in
+        let time = Double(bin) / 100
+        return (time < 2 || (time >= 5 && time < 6) || (time >= 6.5 && time < 8)) ? 0.3 : 0.001
+    }
+    let analysis = TimelineAnalysis(microphone: peaks)
+    var edit = VideoEdit(duration: 10)
+    edit.materializeLayers()
+    // 底噪取偏安静的那一档：这里是 0.001，也就是 -60 dB；面板在它上面加余量当门槛。
+    #expect(abs(SilenceDetector.noiseFloor(edit: edit, analysis: analysis) - (-60)) < 0.5)
+    let ranges = SilenceDetector.ranges(edit: edit, analysis: analysis)
+    #expect(ranges.count == 2)
+    #expect(abs(ranges[0].lowerBound - 2.15) < 0.011 && abs(ranges[0].upperBound - 4.85) < 0.011)
+    #expect(abs(ranges[1].lowerBound - 8.15) < 0.011 && abs(ranges[1].upperBound - 10) < 0.001)
+    var muted = edit; muted.audio.muted = [.microphone]
+    #expect(SilenceDetector.ranges(edit: muted, analysis: analysis).isEmpty)
+    // 检测出来的区间交给剪除：成片正好短了这么多，剩下的每一格都不在长停顿里。
+    let removed = edit.cutTimelineRanges(ranges)
+    try edit.validate(sourceDuration: 10)
+    #expect(abs(edit.duration - (10 - removed)) < 0.001 && abs(removed - 4.55) < 0.03)
+    #expect(SilenceDetector.ranges(edit: edit, analysis: analysis).isEmpty, "剪完还能再检出停顿")
+}

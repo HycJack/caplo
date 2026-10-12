@@ -96,3 +96,34 @@ private func recording(_ duration: Double) -> VideoEdit {
     #expect(!(edit.cameraClips ?? []).contains { $0.id == still.id })
     #expect(edit.clips.contains { $0.id == tail })
 }
+
+/// 去除静音用的"剪掉一段并合拢"：后面的内容前移补上，声音不被拆轨，叠加层与镜头留在各自的内容上。
+@Test func cuttingTimelineRangesClosesTheGapAndKeepsEverythingOnItsContent() throws {
+    var edit = recording(10)
+    // 源域遮罩盖着素材 6–8 秒：剪掉前面两秒之后它应当出现在成片 4–6 秒。
+    edit.addMask(MaskSegment(start: 6, duration: 2, x: 0.5, y: 0.5, width: 0.3, height: 0.2))
+    func pinned(_ start: Double, _ duration: Double) -> FocusSegment {
+        var focus = FocusSegment(start: start, duration: duration, x: 0.5, y: 0.5); focus.timelineStart = start; return focus
+    }
+    // 三个钉在成片上的镜头：尾巴伸进剪掉的区间、整个落在区间里、在区间之后。
+    let trimmed = pinned(1, 2), swallowed = pinned(2.5, 1), later = pinned(5, 1)
+    edit.focuses = [trimmed, swallowed, later]
+    let removed = edit.cutTimelineRanges([8..<9.5, 2..<4])
+    try edit.validate(sourceDuration: 10)
+    #expect(abs(removed - 3.5) < 0.001 && abs(edit.duration - 6.5) < 0.001, "剪掉 \(removed) 秒，成片 \(edit.duration) 秒")
+    #expect(edit.systemClips == nil && edit.microphoneClips == nil, "去静音把跟随画面的声音拆成了单独的轨")
+    let clips = edit.clips.sorted { ($0.timelineStart ?? 0) < ($1.timelineStart ?? 0) }
+    #expect(clips.map { ($0.timelineStart ?? -1).rounded(toPlaces: 3) } == [0, 2, 6])
+    #expect(clips.map { $0.sourceStart.rounded(toPlaces: 3) } == [0, 4, 9.5])
+    #expect(abs((edit.sourceTime(at: 2.5) ?? 0) - 4.5) < 0.001)
+    #expect(edit.maskSpans().map { [$0.start.rounded(toPlaces: 3), $0.end.rounded(toPlaces: 3)] } == [[4, 6]])
+    #expect(edit.focuses.first { $0.id == swallowed.id } == nil)
+    let head = try #require(edit.focuses.first { $0.id == trimmed.id })
+    #expect(abs((head.timelineStart ?? 0) - 1) < 0.001 && abs(head.duration - 1) < 0.001)
+    let moved = try #require(edit.focuses.first { $0.id == later.id })
+    #expect(abs((moved.timelineStart ?? 0) - 3) < 0.001 && abs(moved.duration - 1) < 0.001)
+}
+
+private extension Double {
+    func rounded(toPlaces places: Int) -> Double { let scale = pow(10, Double(places)); return (self * scale).rounded() / scale }
+}

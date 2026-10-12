@@ -95,5 +95,18 @@ extension WindowLifecycleTests {
         // 只改遮罩时不该重新规划：renderEdit 仍然带着同一条路径。
         _ = model.addMask(start: 1, duration: 1)
         #expect(model.renderEdit.focuses.first { $0.id == focus }?.path == resolved.path)
+
+        // 去除静音走的"剪掉并合拢"：在带自动镜头、跟随镜头（有运镜路径）与遮罩的工程上剪两段——
+        // 一段切进跟随镜头的开头，一段紧贴它的结尾。工程仍然有效（没被校验回滚）、存得下读得回，一步撤销复原。
+        let before = model.edit.duration
+        model.removeSilence([0.5..<1.5, 3.0..<4.5])
+        #expect(model.error == nil)
+        #expect(abs(model.edit.duration - (before - 2.5)) < 0.001, "成片 \(model.edit.duration) 秒")
+        #expect(model.edit.focuses.allSatisfy { ($0.timelineStart ?? 0) + $0.duration <= model.edit.duration + 0.001 })
+        #expect(model.renderEdit.focuses.first { $0.id == focus }?.path != nil)
+        model.settlePendingSaves()
+        #expect(abs(try EditStorage.load(in: url, document: document).duration - model.edit.duration) < 0.001)
+        model.undo()
+        #expect(abs(model.edit.duration - before) < 0.001)
     }
 }
