@@ -74,13 +74,13 @@
         }
       }
     },
-    "%@ 固定用于缩放时间线导航条": {
+    "%@ 固定用于缩放时间线": {
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "%@ is reserved for zooming the timeline navigator"
+            "value": "%@ is reserved for zooming the timeline"
           }
         }
       }
@@ -114,17 +114,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "%@ s"
-          }
-        }
-      }
-    },
-    "%@ 至 %@ 秒，共 %@ 秒": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "%@ to %@ s, of %@ s"
           }
         }
       }
@@ -1408,6 +1397,17 @@
         }
       }
     },
+    "光标效果": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cursor Effects"
+          }
+        }
+      }
+    },
     "光标标识无效。": {
       "extractionState": "manual",
       "localizations": {
@@ -2522,6 +2522,17 @@
         }
       }
     },
+    "受版权保护的视频无法导入。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Copy-protected videos can’t be imported."
+          }
+        }
+      }
+    },
     "叠加": {
       "extractionState": "manual",
       "localizations": {
@@ -2551,6 +2562,17 @@
           "stringUnit": {
             "state": "translated",
             "value": "Record a single window"
+          }
+        }
+      }
+    },
+    "只影响之后的新录制；进编辑器后都可以再改。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Applies to new recordings only. Everything can still be changed in the editor."
           }
         }
       }
@@ -2929,6 +2951,17 @@
         }
       }
     },
+    "在布局面板保存预设后可选。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Save a preset in the Layout panel to choose it here."
+          }
+        }
+      }
+    },
     "在成片上显示按下的快捷键": {
       "extractionState": "manual",
       "localizations": {
@@ -2947,6 +2980,17 @@
           "stringUnit": {
             "state": "translated",
             "value": "Split at Playhead"
+          }
+        }
+      }
+    },
+    "在时间线上选中一块音乐来调整。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Select a music block on the timeline to adjust it."
           }
         }
       }
@@ -3611,6 +3655,17 @@
         }
       }
     },
+    "导入": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Import"
+          }
+        }
+      }
+    },
     "导入图片": {
       "extractionState": "manual",
       "localizations": {
@@ -3622,6 +3677,17 @@
         }
       }
     },
+    "导入失败：%@": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Import failed: %@"
+          }
+        }
+      }
+    },
     "导入字幕": {
       "extractionState": "manual",
       "localizations": {
@@ -3629,6 +3695,28 @@
           "stringUnit": {
             "state": "translated",
             "value": "Import Captions"
+          }
+        }
+      }
+    },
+    "导入的视频": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Imported Video"
+          }
+        }
+      }
+    },
+    "导入视频": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Import Video"
           }
         }
       }
@@ -3942,17 +4030,6 @@
         }
       }
     },
-    "左右方向键移动视窗，加减键缩放，双击显示全部": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Use the left and right arrow keys to move the view, plus and minus to zoom, and double-click to show everything"
-          }
-        }
-      }
-    },
     "已保存": {
       "extractionState": "manual",
       "localizations": {
@@ -4215,6 +4292,17 @@
           "stringUnit": {
             "state": "translated",
             "value": "Platform Ratio"
+          }
+        }
+      }
+    },
+    "平滑、回弹与点击高亮。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Smoothing, bounce and click highlights."
           }
         }
       }
@@ -4681,6 +4769,17 @@
         }
       }
     },
+    "循环": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Loop"
+          }
+        }
+      }
+    },
     "微博": {
       "extractionState": "manual",
       "localizations": {
@@ -5121,17 +5220,6 @@
         }
       }
     },
-    "拖动浏览 · 拖两端缩放 · 双击全览": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Drag to browse · Drag the ends to zoom · Double-click to show all"
-          }
-        }
-      }
-    },
     "拖角缩放 · 双击复位": {
       "extractionState": "manual",
       "localizations": {
@@ -5227,6 +5315,17 @@
           "stringUnit": {
             "state": "translated",
             "value": "Zoom in on clicks and smoothly follow the pointer"
+          }
+        }
+      }
+    },
+    "按点击自动推近。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Zoom in on clicks automatically."
           }
         }
       }
@@ -5782,6 +5881,28 @@
         }
       }
     },
+    "新录制的画面布局": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Layout for new recordings"
+          }
+        }
+      }
+    },
+    "新录制的默认效果": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Defaults for New Recordings"
+          }
+        }
+      }
+    },
     "新版本需要更新的 macOS。": {
       "extractionState": "manual",
       "localizations": {
@@ -6277,13 +6398,13 @@
         }
       }
     },
-    "时间线总览": {
+    "时间线是空的，先放上画面再加音乐。": {
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Timeline Overview"
+            "value": "The timeline is empty. Add footage before adding music."
           }
         }
       }
@@ -7158,6 +7279,17 @@
         }
       }
     },
+    "正在导入": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Importing"
+          }
+        }
+      }
+    },
     "正在导出视频": {
       "extractionState": "manual",
       "localizations": {
@@ -7708,6 +7840,17 @@
         }
       }
     },
+    "添加音乐": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Add Music"
+          }
+        }
+      }
+    },
     "添加高亮": {
       "extractionState": "manual",
       "localizations": {
@@ -8045,6 +8188,17 @@
           "stringUnit": {
             "state": "translated",
             "value": "Amber Glow"
+          }
+        }
+      }
+    },
+    "用录下来的原始光标。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Use the cursor exactly as recorded."
           }
         }
       }
@@ -9490,6 +9644,17 @@
         }
       }
     },
+    "视频": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Video"
+          }
+        }
+      }
+    },
     "视频号": {
       "extractionState": "manual",
       "localizations": {
@@ -10293,6 +10458,50 @@
         }
       }
     },
+    "这个文件里没有可用的声音。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This file has no usable audio."
+          }
+        }
+      }
+    },
+    "这个文件里没有视频画面。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This file has no video."
+          }
+        }
+      }
+    },
+    "这个视频无法解码。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This video can’t be decoded."
+          }
+        }
+      }
+    },
+    "这个视频无法转换。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This video can’t be converted."
+          }
+        }
+      }
+    },
     "这个语言还没有本机识别模型。": {
       "extractionState": "manual",
       "localizations": {
@@ -10355,6 +10564,17 @@
           "stringUnit": {
             "state": "translated",
             "value": "This change was reverted."
+          }
+        }
+      }
+    },
+    "这段声音太短，无法导入。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This audio is too short to import."
           }
         }
       }
@@ -11250,6 +11470,17 @@
         }
       }
     },
+    "音乐": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Music"
+          }
+        }
+      }
+    },
     "音量": {
       "extractionState": "manual",
       "localizations": {
@@ -11620,6 +11851,17 @@
           "stringUnit": {
             "state": "translated",
             "value": "Yellow"
+          }
+        }
+      }
+    },
+    "默认": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Default"
           }
         }
       }

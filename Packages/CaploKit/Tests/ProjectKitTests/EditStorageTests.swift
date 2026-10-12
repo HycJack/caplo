@@ -55,3 +55,46 @@ import EditingCore
     #expect(loaded.maskList.count == 1 && loaded.textList.count == 1)
 }
 
+
+/// "新录制的默认效果"只决定新工程的起点：关掉自动聚焦时不生成镜头，关掉光标效果时用原样的光标，
+/// 默认布局整套带上；已经有编辑数据的工程不受这些设置影响。
+@Test func newProjectDefaultsOnlyShapeTheStartingPoint() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let url = try ProjectStorage.create(in: root, name: "默认效果")
+    let path = "Media/000000-screen.mov"
+    try Data([1]).write(to: url.appendingPathComponent(path))
+    var record = SegmentRecord(id: 0, duration: 8, files: [.screen: path])
+    record.eventsPath = "Events/000000.json"
+    var samples = (0..<160).map { PointerSample(time: Double($0) / 20, x: 0.2 + 0.003 * Double($0), y: 0.5, kind: .move) }
+    samples += [PointerSample(time: 2, x: 0.3, y: 0.5, kind: .click), PointerSample(time: 5, x: 0.6, y: 0.5, kind: .click)]
+    try JSONEncoder().encode(samples).write(to: url.appendingPathComponent(record.eventsPath!))
+    try ProjectStorage.commit(record, to: url)
+    var document = try ProjectStorage.load(url)
+    document.capture = CaptureMetadata(desktopBounds: CGRect(x: 0, y: 0, width: 1280, height: 800), pixelSize: CGSize(width: 1280, height: 800), pointPixelScale: 1, pointerEnabled: true)
+
+    // 不传设置：与以前一样，自动聚焦开、推荐的光标效果、内置布局。
+    let usual = try EditStorage.load(in: url, document: document)
+    #expect(usual.automaticFocus && !usual.focuses.isEmpty && usual.pointer == .recommended && usual.layout == CanvasLayout().synced(to: document))
+
+    var plain = NewProjectDefaults()
+    plain.automaticFocus = false; plain.cursorEffects = false
+    var layout = CanvasLayout(); layout.padding = 0; layout.cornerRadius = 0; layout.ratio = .widescreen
+    plain.layout = layout
+    let edit = try EditStorage.load(in: url, document: document, defaults: plain)
+    #expect(!edit.automaticFocus && edit.focuses.isEmpty)
+    #expect(SceneEvaluator.focus(edit: edit, time: 2.5).scale == 1 && SceneEvaluator.focus(edit: usual, time: 2.5).scale > 1.2)
+    let pointer = try #require(edit.pointer)
+    #expect(!pointer.clicksVisible && pointer.smoothing == 0 && pointer.bounce == 0 && pointer.motionBlur == 0 && pointer.cursorScale == 0.5)
+    #expect(edit.layout.padding == 0 && edit.layout.cornerRadius == 0 && edit.layout.ratio == .widescreen)
+    try edit.validate(sourceDuration: document.duration)
+
+    // 存过之后再打开：设置再怎么变，这份工程还是它自己的样子。
+    try EditStorage.save(edit, in: url, document: document)
+    #expect(try EditStorage.load(in: url, document: document, defaults: NewProjectDefaults()) == edit)
+}
+
+private extension CanvasLayout {
+    /// 新工程读出来的布局会按录制尺寸同步一次"原始"比例。
+    func synced(to document: ProjectDocument) -> CanvasLayout { var copy = self; copy.syncOriginalAspect(capture: document.capture?.pixelSize); return copy }
+}

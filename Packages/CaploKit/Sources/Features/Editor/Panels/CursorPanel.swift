@@ -11,7 +11,8 @@ struct CursorPanel: View {
     /// 成片里不画光标：样式与运动参数这时没有意义，置灰；点击高亮照常（它有自己的开关）。
     private var hidden: Bool { model.edit.pointer?.cursorVisible == false }
     /// 旧版"片段设置"里单独隐藏过光标的片段数。那个面板已删除，这里给出提示和恢复入口。
-    private var clipsHidingCursor: Int { model.edit.clips.filter(\.cursorHidden).count }
+    /// 导入的视频没有指针数据，本来就不画光标，不算在内。
+    private var clipsHidingCursor: Int { model.edit.clips.filter { $0.cursorHidden && !model.isImported($0) }.count }
     @State private var category: CursorStyleGroup
 
     init(model: VideoEditorModel) {
@@ -38,7 +39,8 @@ struct CursorPanel: View {
                 if clipsHidingCursor > 0 {
                     PanelNote(String(localized: "有 \(clipsHidingCursor) 个片段单独隐藏了光标（旧版片段设置留下的）。"))
                     Button("这些片段也显示光标") {
-                        model.commit { edit in for index in edit.clips.indices { edit.clips[index].cursorHidden = false } }
+                        let imported = Set(model.edit.clips.filter { model.isImported($0) }.map(\.id))
+                        model.commit { edit in for index in edit.clips.indices where !imported.contains(edit.clips[index].id) { edit.clips[index].cursorHidden = false } }
                     }.buttonStyle(StudioButtonStyle(.secondary, size: .small))
                 }
             }

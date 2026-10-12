@@ -120,6 +120,44 @@ public enum ProjectMedia {
           }
           }
         }
+        // 音乐：每块引用自己的文件，按泳道建轨（重叠的块各占一条）。只放到成片结尾为止，音乐不延长成片；
+        // 开了循环的块放到文件结尾后从头再来，直到块结束。
+        var musicTracks: [(Int, AVMutableCompositionTrack)] = []
+        var musicSources: [String: (asset: AVURLAsset, track: AVAssetTrack, range: CMTimeRange)] = [:]
+        let musicClips = snapshot.musicClips ?? [], musicLanes = audioLanes(musicClips)
+        for clip in musicClips {
+            try Task.checkCancellation()
+            // 文件不在（被移走、外置盘断开）就空着，和缺失的录制素材一样不拦整条合成。
+            guard let music = clip.music, ProjectStorage.mediaExists(music.file, in: url) else { continue }
+            let start = clip.timelineStart ?? 0, end = min(start + clip.duration, snapshot.duration)
+            guard end - start > 0.001 else { continue }
+            let source: AVAssetTrack, sourceRange: CMTimeRange
+            if let cached = musicSources[music.file] { source = cached.track; sourceRange = cached.range }
+            else {
+                let asset = AVURLAsset(url: try ProjectStorage.mediaURL(music.file, in: url))
+                guard let loaded = try await asset.loadTracks(withMediaType: .audio).first else { continue }
+                source = loaded; sourceRange = try await loaded.load(.timeRange)
+                musicSources[music.file] = (asset, source, sourceRange)
+            }
+            let length = min(music.length, sourceRange.duration.seconds)
+            guard length > 0.05 else { continue }
+            let lane = musicLanes[clip.id] ?? 0
+            let destination: AVMutableCompositionTrack
+            if let existing = musicTracks.first(where: { $0.0 == lane }) { destination = existing.1 }
+            else {
+                guard let created = composition.addMutableTrack(withMediaType: .audio, preferredTrackID: musicTrackID(lane: lane)) else { throw ProjectError.invalid(String(localized: "无法创建声音轨道。")) }
+                musicTracks.append((lane, created)); destination = created
+            }
+            var cursor = start, offset = min(clip.sourceStart, length - 0.001)
+            while cursor < end - 0.0005 {
+                let piece = min(end - cursor, length - offset)
+                guard piece > 0.0005 else { break }
+                let range = CMTimeRange(start: sourceRange.start + CMTime(seconds: offset, preferredTimescale: 48_000), duration: CMTime(seconds: piece, preferredTimescale: 48_000))
+                try destination.insertTimeRange(range, of: source, at: CMTime(seconds: cursor, preferredTimescale: 48_000))
+                cursor += piece; offset = 0
+                guard music.loops else { break }
+            }
+        }
         // AVFoundation 不支持完全空的视频轨道导出；用原素材单帧提供时钟，合成器按逻辑空白只画背景。
         if composition.track(withTrackID: 1) == nil, snapshot.duration > 0,
            let path = segments.compactMap({ $0.files[.screen] }).first(where: { ProjectStorage.mediaExists($0, in: url) }) {
@@ -140,7 +178,7 @@ public enum ProjectMedia {
             (audioGroups[role] ?? []).map { lane, track in
                 volumeParameters(track: track, role: role, lane: lane, edit: snapshot, levels: levels)
             }
-        }
+        } + musicTracks.map { lane, track in musicParameters(track: track, lane: lane, edit: snapshot, levels: levels) }
         return (composition, mix)
     }
 
@@ -160,6 +198,32 @@ public enum ProjectMedia {
     /// 泳道的轨道号：第 0 道沿用角色的固定轨号（系统 2、麦克风 3），其余从 100 002 起，系统偶数、麦克风奇数。
     nonisolated static func audioTrackID(role: MediaRole, lane: Int) -> CMPersistentTrackID {
         lane == 0 ? trackID(for: role) : CMPersistentTrackID(100_000 + lane * 2 + (role == .systemAudio ? 0 : 1))
+    }
+
+    /// 音乐泳道的轨道号：从 200 000 起，与录制声音的泳道（100 002 起）错开。
+    nonisolated static let musicTrackBase: CMPersistentTrackID = 200_000
+    nonisolated static func musicTrackID(lane: Int) -> CMPersistentTrackID { musicTrackBase + CMPersistentTrackID(lane) }
+
+    /// 一条音乐泳道的音量：每一块在自己的范围里按音量放，两头按淡入、淡出渐变。
+    /// 有任何一条录制声音在"仅播放此轨"时音乐不出声，与独奏的含义一致。
+    nonisolated static func musicParameters(track: AVAssetTrack, lane: Int, edit: VideoEdit, levels: AudioLevels) -> AVMutableAudioMixInputParameters {
+        let parameter = AVMutableAudioMixInputParameters(track: track)
+        let clips = edit.musicClips ?? [], lanes = audioLanes(clips)
+        // 渐变区间不允许重叠：泳道内的块本来就不重叠，这里再按上一块的结尾兜一道（浮点误差）。
+        var floor = 0.0
+        func time(_ seconds: Double) -> CMTime { CMTime(seconds: seconds, preferredTimescale: 48_000) }
+        for clip in clips.filter({ (lanes[$0.id] ?? 0) == lane }).sorted(by: { ($0.timelineStart ?? 0) < ($1.timelineStart ?? 0) }) {
+            guard let music = clip.music else { continue }
+            let start = max(floor, clip.timelineStart ?? 0), end = min((clip.timelineStart ?? 0) + clip.duration, edit.duration)
+            guard end - start > 0.001 else { continue }
+            let volume = levels.solo.isEmpty ? min(1, max(0, music.volume)) : 0
+            let fades = music.fades(in: end - start)
+            if fades.fadeIn > 0.001 { parameter.setVolumeRamp(fromStartVolume: 0, toEndVolume: volume, timeRange: CMTimeRange(start: time(start), duration: time(fades.fadeIn))) }
+            else { parameter.setVolume(volume, at: time(start)) }
+            if fades.fadeOut > 0.001 { parameter.setVolumeRamp(fromStartVolume: volume, toEndVolume: 0, timeRange: CMTimeRange(start: time(end - fades.fadeOut), end: time(end))) }
+            floor = end
+        }
+        return parameter
     }
 
     /// 轨道号反推泳道（`audioTrackID` 的逆运算）。
@@ -213,10 +277,12 @@ public enum ProjectMedia {
         if previous.audio != edit.audio || previous.gainSignature != edit.gainSignature {
             let mix = AVMutableAudioMix()
             mix.inputParameters = [MediaRole.systemAudio, .microphone].flatMap { role -> [AVMutableAudioMixInputParameters] in
-                let tracks = composition.tracks.filter { $0.mediaType == .audio && ($0.trackID == trackID(for: role) || ($0.trackID >= 100_002 && $0.trackID % 2 == (role == .systemAudio ? 0 : 1))) }.sorted { $0.trackID < $1.trackID }
+                let tracks = composition.tracks.filter { $0.mediaType == .audio && ($0.trackID == trackID(for: role) || ($0.trackID >= 100_002 && $0.trackID < musicTrackBase && $0.trackID % 2 == (role == .systemAudio ? 0 : 1))) }.sorted { $0.trackID < $1.trackID }
                 return tracks.map { track in
                     volumeParameters(track: track, role: role, lane: audioLane(trackID: track.trackID), edit: edit, levels: edit.audio)
                 }
+            } + composition.tracks.filter { $0.mediaType == .audio && $0.trackID >= musicTrackBase }.map { track in
+                musicParameters(track: track, lane: Int(track.trackID - musicTrackBase), edit: edit, levels: edit.audio)
             }
             item.audioMix = mix
         }

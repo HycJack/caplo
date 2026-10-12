@@ -46,6 +46,7 @@ extension VideoEdit {
         for clip in cameraClips ?? [] where result[clip.id] == nil { result[clip.id] = .media(.camera) }
         for clip in systemClips ?? [] where result[clip.id] == nil { result[clip.id] = .media(.system) }
         for clip in microphoneClips ?? [] where result[clip.id] == nil { result[clip.id] = .media(.microphone) }
+        for clip in musicClips ?? [] where result[clip.id] == nil { result[clip.id] = .media(.music) }
         for focus in focuses where result[focus.id] == nil { result[focus.id] = .focus }
         for mask in maskList where result[mask.id] == nil { result[mask.id] = .mask }
         for value in textList where result[value.id] == nil { result[value.id] = .text }
@@ -138,7 +139,7 @@ extension VideoEdit {
     /// 已有类型共用真实时间范围；旧连续素材的起点按原数组展开，不能用显示宽度判断冲突。
     public var timelineBlockRanges: [UUID: Range<Double>] {
         var result: [UUID: Range<Double>] = [:]
-        for values in [clips, cameraClips ?? [], systemClips ?? [], microphoneClips ?? []] {
+        for values in [clips, cameraClips ?? [], systemClips ?? [], microphoneClips ?? [], musicClips ?? []] {
             var cursor = 0.0
             for clip in values {
                 let start = clip.timelineStart ?? cursor, end = start + clip.duration

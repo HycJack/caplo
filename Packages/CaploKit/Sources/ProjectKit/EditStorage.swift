@@ -6,7 +6,9 @@ public enum EditStorage {
     /// `wallpaper`：当前桌面壁纸文件，只在**新建**这份编辑数据时用作默认背景。
     /// 取壁纸要碰 `NSScreen`，得在主线程上问，所以由调用方取好传进来（`DesktopWallpaper.currentURL()`）。
     /// `watermark`：新工程（还没有编辑数据）带上的默认水印；已有编辑数据的工程不受它影响。
-    public static func load(in url: URL, document: ProjectDocument, wallpaper: URL? = nil, watermark: Watermark? = nil) throws -> VideoEdit {
+    /// `defaults`：新工程的起点（自动聚焦、光标效果、画面布局），同样只在新建这份编辑数据时用。
+    public static func load(in url: URL, document: ProjectDocument, wallpaper: URL? = nil, watermark: Watermark? = nil,
+                            defaults: NewProjectDefaults = NewProjectDefaults()) throws -> VideoEdit {
         let path = url.appendingPathComponent("edits.json")
         guard FileManager.default.fileExists(atPath: path.path) else {
             var edit = VideoEdit(duration: document.duration)
@@ -15,16 +17,29 @@ public enum EditStorage {
             if let wallpaper, let imported = try? DesktopWallpaper.importWallpaper(wallpaper, into: url) {
                 edit.layout.backgroundImage = imported
             }
+            // 默认布局是用户存的预设：背景图片是工程自己的（上面刚导入的壁纸），预设里不带。
+            if let layout = defaults.layout {
+                var value = layout; value.backgroundImage = edit.layout.backgroundImage
+                edit.layout = value
+            }
             if document.segments.contains(where: { $0.files[.camera] != nil }) { edit.camera = CameraLayout() }
             if let watermark, watermark.isValid { edit.watermark = watermark }
             // 指针事件只解析一次：光标样式判断与自动镜头共用（长录制的事件文件解析两遍要多花几百毫秒）。
             let samples = try events(in: url, document: document)
             if document.capture?.pointerEnabled == true {
-                edit.pointer = .recommended
+                if defaults.cursorEffects { edit.pointer = .recommended }
+                else {
+                    // 原样的光标要和录制时一样大：倍率从录下来的箭头素材里量。
+                    let cursors = CursorStorage.load(ids: Set(samples.compactMap(\.cursorAssetID)), in: url)
+                    edit.pointer = .plain(systemScale: PointerTimeline(events: samples, capturedCursors: cursors).systemCursorScale)
+                }
                 if samples.contains(where: { $0.cursorAssetID != nil }) { edit.pointer?.style = .captured }
             }
             edit.focusEngineVersion = 2
-            edit.focuses = AutoFocus.generate(events: samples, duration: document.duration)
+            // 默认关着自动聚焦时不生成镜头：留一批"不生效、也没展开到时间线上"的镜头在工程里是以前没有过的状态，
+            // 逐次提交都要多跑一遍展开。之后在聚焦面板打开开关时再按当时的参数生成（见 `VideoEditorModel.setAutomaticFocus`）。
+            if defaults.automaticFocus { edit.focuses = AutoFocus.generate(events: samples, duration: document.duration) }
+            else { edit.automaticFocus = false }
             edit.layout.syncOriginalAspect(capture: document.capture?.pixelSize)
             return edit
         }
@@ -142,10 +157,12 @@ public enum EditStorage {
     /// 全部片段的按键，换算到工程时间。与指针事件同样的规则：路径限制在 `Events/` 内，哪一段读不出来就跳过哪一段。
     /// 整个录制最后 0.4 秒里的按键不要：那多半是按下去结束录制的快捷键。
     public static func keys(in url: URL, document: ProjectDocument) -> [KeyPress] {
-        var result: [KeyPress] = [], cursor = 0.0
+        var result: [KeyPress] = [], cursor = 0.0, recordedEnd = 0.0
         let root = url.resolvingSymlinksInPath().standardizedFileURL.path + "/Events/"
         for segment in document.segments.sorted(by: { $0.id < $1.id }) {
             defer { cursor += segment.duration }
+            // 录制的结尾：后面接着的导入视频不算，否则"结束录制的快捷键"就滤不掉了。
+            if segment.asset == nil { recordedEnd = cursor + segment.duration }
             guard let path = segment.keysPath else { continue }
             let file = url.appendingPathComponent(path).resolvingSymlinksInPath().standardizedFileURL
             guard path.hasPrefix("Events/"), !path.contains(".."), file.path.hasPrefix(root),
@@ -156,7 +173,7 @@ public enum EditStorage {
                 press.time += cursor; result.append(press)
             }
         }
-        let end = cursor - 0.4
+        let end = recordedEnd - 0.4
         return result.filter { $0.time < end }.sorted { $0.time < $1.time }
     }
 }

@@ -66,7 +66,36 @@ struct AudioPanel: View {
         }
     }
 
+    /// 音乐：选中时间线上的一块音乐时调它的音量、淡入淡出与循环；没选中时只有"添加音乐"。
+    @ViewBuilder private var musicSection: some View {
+        PanelSection(String(localized: "音乐")) {
+            if let clip = model.selectedMusic, let music = clip.music {
+                let id = clip.id
+                EditorFill(model: model, title: String(localized: "音量"), value: Binding(get: { Double(model.selectedMusic?.music?.volume ?? music.volume) }, set: { value in model.updateMusic(id) { $0.volume = Float(value) } }),
+                           range: 0...1, suffix: "%", percentage: true, defaultValue: 0.5)
+                EditorStepper(model: model, title: String(localized: "淡入"), value: Binding(get: { model.selectedMusic?.music?.fadeIn ?? music.fadeIn }, set: { value in model.updateMusic(id) { $0.fadeIn = value } }),
+                              range: 0...MusicSource.maximumFade, step: 0.1, defaultValue: 0)
+                EditorStepper(model: model, title: String(localized: "淡出"), value: Binding(get: { model.selectedMusic?.music?.fadeOut ?? music.fadeOut }, set: { value in model.updateMusic(id) { $0.fadeOut = value } }),
+                              range: 0...MusicSource.maximumFade, step: 0.1, defaultValue: 0)
+                Toggle(isOn: Binding(get: { model.selectedMusic?.music?.loops ?? music.loops }, set: { value in model.commit { edit in
+                    guard var values = edit.musicClips, let number = values.firstIndex(where: { $0.id == id }) else { return }
+                    values[number].music?.loops = value; edit.musicClips = values
+                } })) {
+                    SettingLabel(String(localized: "循环"), systemImage: "repeat")
+                }
+                .toggleStyle(StudioToggleStyle())
+            } else if !(model.edit.musicClips ?? []).isEmpty {
+                PanelNote(String(localized: "在时间线上选中一块音乐来调整。"))
+            }
+            Button("添加音乐") { EditorImport.pickMusic(for: model) }
+                .buttonStyle(StudioButtonStyle(.secondary, size: .small))
+                .disabled(!model.ready || model.importing || model.exporting)
+        }
+    }
+
     var body: some View {
+        // 选中音乐块时它的参数排在最上面，否则"添加音乐"放在各条声音之后。
+        if model.selectedMusic != nil { musicSection }
         if !model.audioTracks.isEmpty {
             PanelSection(String(localized: "剪辑")) {
                 Toggle(isOn: Binding(get: { model.audioFollowsPicture }, set: { $0 ? model.attachAudio() : model.detachAudio() })) {
@@ -121,6 +150,7 @@ struct AudioPanel: View {
                 }
             }
         }
+        if model.selectedMusic == nil { musicSection }
         PanelNote(String(localized: "静音保留原音量。“仅播放此轨”开启后只播放勾选的轨道；静音优先。调整即时试听，并应用于导出。"))
     }
 

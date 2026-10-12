@@ -18,6 +18,12 @@ public struct SegmentRecord: Codable, Sendable, Equatable, Identifiable {
     /// 素材零时刻相对片段起点的偏移；缺省为零，兼容此前工程。
     /// 摄像头可能晚于屏幕提供首帧，偏移不能仅从容器 timeRange 推断。
     public var mediaOffsets: [MediaRole: Double]?
+    /// 这一段属于哪份素材：nil 是工程本来的那份（录制，或新建工程时导入的那个视频），
+    /// 之后每导入一个视频各占一个编号。编号相同且相邻的片段在源时间上是连续的一份素材，
+    /// 剪辑时拖边只能在本素材范围内伸缩（见 `ProjectDocument.assetRange`）。
+    public var asset: Int?
+    /// 导入的视频自己的画面像素尺寸（可能与录制画面不同）；录制片段不记，按 `CaptureMetadata.pixelSize`。
+    public var pixelSize: CGSize?
     public init(id: Int, duration: Double, files: [MediaRole: String]) {
         self.id = id; self.duration = duration; self.files = files
     }
@@ -62,6 +68,39 @@ public struct ProjectDocument: Codable, Sendable, Identifiable {
         return rate
     }
     public init(name: String) { self.name = name }
+
+    /// 各份素材在源时间里的范围，按先后排列：工程本来的素材是第一段，导入的视频依次接在后面。
+    public var assetRanges: [(asset: Int?, range: Range<Double>)] {
+        var result: [(asset: Int?, range: Range<Double>)] = []
+        var cursor = 0.0
+        for segment in segments.sorted(by: { $0.id < $1.id }) {
+            let end = cursor + segment.duration
+            if let last = result.last, last.asset == segment.asset { result[result.count - 1].range = last.range.lowerBound..<end }
+            else { result.append((segment.asset, cursor..<end)) }
+            cursor = end
+        }
+        return result
+    }
+    /// 源时刻 `source` 所在那份素材的范围；落在所有素材之外（空工程、浮点误差）时退回整条源时间。
+    public func assetRange(containing source: Double) -> Range<Double> {
+        let ranges = assetRanges
+        if let hit = ranges.first(where: { $0.range.contains(source) }) { return hit.range }
+        if let last = ranges.last, source >= last.range.upperBound { return last.range }
+        return 0..<max(duration, 0.000_001)
+    }
+    /// 源时刻 `source` 那一帧画面的像素尺寸：导入的视频按它自己的，其余按录制尺寸。
+    public func pixelSize(atSource source: Double) -> CGSize? {
+        var cursor = 0.0
+        for segment in segments.sorted(by: { $0.id < $1.id }) {
+            defer { cursor += segment.duration }
+            if source < cursor + segment.duration { return segment.pixelSize ?? capture?.pixelSize }
+        }
+        return capture?.pixelSize
+    }
+    /// 这个源时刻落在导入的视频里（没有指针与按键数据）。
+    public func isImported(source: Double) -> Bool {
+        assetRanges.first { $0.range.contains(source) }?.asset != nil
+    }
 }
 
 public enum ProjectError: LocalizedError {
@@ -222,6 +261,35 @@ public enum ProjectStorage {
         try FileManager.default.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
         try FileManager.default.copyItem(at: source, to: destination)
         return path
+    }
+
+    /// 把用户选择的音频文件复制进工程包的 `Media/Music/`，返回相对路径；不修改 manifest。
+    public static func importMusic(from source: URL, into project: URL) throws -> String {
+        let extensionName = source.pathExtension.isEmpty ? "m4a" : source.pathExtension.lowercased()
+        let path = "Media/Music/\(UUID().uuidString).\(extensionName)"
+        let destination = try mediaURL(path, in: project)
+        try FileManager.default.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try FileManager.default.copyItem(at: source, to: destination)
+        return path
+    }
+
+    /// 给导入的视频在工程里留一个位置，返回相对路径（文件由调用方写进去）。
+    public static func importedVideoPath(extension name: String) -> String {
+        "Media/import-\(UUID().uuidString.prefix(8).lowercased()).\(name.isEmpty ? "mov" : name.lowercased())"
+    }
+
+    /// 把一份已经放进工程的视频登记成新的一段素材，接在源时间末尾；返回更新后的清单。
+    /// `separate` 为真时它是一份独立素材（给新编号）；新建工程时导入的第一个视频就是工程本来的素材，不编号。
+    /// 调用方须持有工程租约（编辑会话）或确保没有别人在写（新建工程）。
+    public static func appendImported(path: String, duration: Double, pixelSize: CGSize, hasAudio: Bool, separate: Bool, to project: URL) throws -> ProjectDocument {
+        var document = try load(project)
+        var segment = SegmentRecord(id: (document.segments.map(\.id).max() ?? -1) + 1, duration: duration,
+                                    files: hasAudio ? [.screen: path, .systemAudio: path] : [.screen: path])
+        if separate { segment.asset = (document.segments.compactMap(\.asset).max() ?? 0) + 1; segment.pixelSize = pixelSize }
+        try validate([segment], in: project, checkingFiles: true)
+        document.segments.append(segment)
+        try save(document, to: project)
+        return document
     }
 
     /// 片段日志的文件名：六位编号加 .json。

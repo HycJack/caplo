@@ -25,10 +25,13 @@ public struct VideoClip: Codable, Equatable, Sendable, Identifiable {
     /// 非空表示这是一块卡片：画面轨上自带内容（背景 + 文字）的一段，不引用任何素材，
     /// `sourceStart` / `mediaDuration` 对它没有意义。见 `TitleCard`。
     public var card: TitleCard?
+    /// 非空表示这是音乐轨上的一块：引用工程里的一个音频文件，`sourceStart` 是文件内的时刻
+    /// （不是录制素材的源时间），`mediaDuration` 对它没有意义。见 `MusicSource`。
+    public var music: MusicSource?
 
     public init(sourceStart: Double, duration: Double) { self.sourceStart = sourceStart; self.duration = duration }
 
-    private enum CodingKeys: String, CodingKey { case id, sourceStart, duration, timelineStart, mediaDuration, systemGain, microphoneGain, cursorHidden, title, holdSource, card }
+    private enum CodingKeys: String, CodingKey { case id, sourceStart, duration, timelineStart, mediaDuration, systemGain, microphoneGain, cursorHidden, title, holdSource, card, music }
 
     /// 旧文件没有片段级字段，按默认值解码。
     public init(from decoder: Decoder) throws {
@@ -44,6 +47,7 @@ public struct VideoClip: Codable, Equatable, Sendable, Identifiable {
         title = try container.decodeIfPresent(String.self, forKey: .title)
         holdSource = try container.decodeIfPresent(UUID.self, forKey: .holdSource)
         card = try container.decodeIfPresent(TitleCard.self, forKey: .card)
+        music = try container.decodeIfPresent(MusicSource.self, forKey: .music)
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -59,6 +63,7 @@ public struct VideoClip: Codable, Equatable, Sendable, Identifiable {
         try container.encodeIfPresent(title, forKey: .title)
         try container.encodeIfPresent(holdSource, forKey: .holdSource)
         try container.encodeIfPresent(card, forKey: .card)
+        try container.encodeIfPresent(music, forKey: .music)
     }
 
     public func gain(for track: AudioTrack) -> Float { track == .system ? systemGain : microphoneGain }
@@ -211,6 +216,8 @@ public struct VideoEdit: Codable, Equatable, Sendable {
     public var microphoneClips: [VideoClip]?
     /// 用户明确分离过声音：打开时不再自动收回成跟随画面。
     public var audioDetached: Bool?
+    /// 音乐轨：导入的音频文件，一块引用一个文件。不计入成片长度（见 `duration`）。
+    public var musicClips: [VideoClip]?
     public var layout = CanvasLayout()
     public var audio = AudioLevels()
     public var focuses: [FocusSegment] = []
@@ -308,7 +315,7 @@ public struct VideoEdit: Codable, Equatable, Sendable {
             var isolated = VideoEdit(duration: 0); isolated.clips = media
             try isolated.validate(sourceDuration: sourceDuration)
         }
-        guard (5...Self.maximumSchemaVersion).contains(schemaVersion),
+        guard (5...Self.maximumSchemaVersion).contains(schemaVersion), validMusic,
               Set(captionList.map(\.id)).count == captionList.count,
               captionStyle?.isValid != false, keystrokes?.isValid != false, watermark?.isValid != false,
               captionList.allSatisfy({ cue in cue.isValid && cue.sourceEnd <= sourceDuration + 0.001
@@ -575,7 +582,7 @@ public struct EditHistory: Sendable {
     private var weights: [Int] = []
     private static func weight(_ edit: VideoEdit) -> Int {
         var value = edit.clips.count + edit.textList.count
-        value += (edit.cameraClips?.count ?? 0) + (edit.systemClips?.count ?? 0) + (edit.microphoneClips?.count ?? 0)
+        value += (edit.cameraClips?.count ?? 0) + (edit.systemClips?.count ?? 0) + (edit.microphoneClips?.count ?? 0) + (edit.musicClips?.count ?? 0)
         for cue in edit.captionList {
             value += 1 + (cue.words?.count ?? 0)
         }

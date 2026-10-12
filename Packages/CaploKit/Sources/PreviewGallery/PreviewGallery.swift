@@ -27,9 +27,6 @@ struct PreviewGallery {
             return
         }
         if CommandLine.arguments.contains("--timeline-review") {
-            let key = "editor.timelineHeight", previous = UserDefaults.standard.object(forKey: "editor.timelineHeight")
-            UserDefaults.standard.set(570.0, forKey: key)
-            defer { UserDefaults.standard.set(previous, forKey: key) }
             let url = try await PreviewFixture.create(camera: true, pointer: true)
             let document = try ProjectStorage.load(url)
             var edit = try EditStorage.load(in: url, document: document)

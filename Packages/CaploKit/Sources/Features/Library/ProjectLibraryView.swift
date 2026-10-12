@@ -95,6 +95,22 @@ final class ProjectLibraryModel {
         VideoEditorWindow.shared.show(project: url)
     }
 
+    /// 正在把选中的视频收成一个新工程（复制，竖拍或 HDR 的还要转一遍）。
+    var importingVideo = false
+    /// 导入一个视频来编辑：新建工程，完成后直接打开编辑器。
+    func importVideo() {
+        guard !importingVideo, let source = EditorImport.pick(EditorImport.videoTypes) else { return }
+        importingVideo = true
+        Task {
+            defer { importingVideo = false }
+            do {
+                let project = try await MediaImport.createProject(from: source)
+                await refresh()
+                VideoEditorWindow.shared.show(project: project)
+            } catch { self.error = String(localized: "导入失败：\(error.localizedDescription)") }
+        }
+    }
+
     /// 工程在不在项目库目录里（库里的工程本来就会列出，不需要记）。
     nonisolated static func isInLibrary(_ url: URL) -> Bool {
         let root = ProjectStorage.libraryURL.resolvingSymlinksInPath().standardizedFileURL.path + "/"
@@ -283,6 +299,8 @@ public struct ProjectLibraryView: View {
                 Button { Task { await model.refresh() } } label: { Image(systemName: "arrow.clockwise") }
                     .buttonStyle(StudioIconButtonStyle()).help("刷新").accessibilityLabel("刷新项目")
                     .disabled(model.loading || previewOnly)
+                Button { model.importVideo() } label: { Label(model.importingVideo ? "正在导入" : "导入视频", systemImage: "square.and.arrow.down") }
+                    .buttonStyle(StudioButtonStyle(.secondary, size: .large)).disabled(model.importingVideo)
                 Button { model.importProject() } label: { Label("打开工程", systemImage: "folder") }.buttonStyle(StudioButtonStyle(.secondary, size: .large))
                 Button { StudioWindows.showRecorder() } label: { Label("新建录制", systemImage: "plus") }.buttonStyle(StudioButtonStyle(.primary, size: .large))
             }

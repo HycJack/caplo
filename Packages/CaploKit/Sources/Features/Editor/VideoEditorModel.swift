@@ -19,7 +19,8 @@ import EditingCore
 /// 样式拖动（每一步都换一份合成，播放器用已解码的当前帧重渲染）共用同一路径；没有播放项时才用离线静帧兜底。
 @MainActor @Observable
 final class VideoEditorModel {
-    let entry: LibraryEntry
+    /// 导入视频会往清单里加一段素材，所以会话期间清单可能变长（只增不减）。
+    private(set) var entry: LibraryEntry
     /// 播放器可以整个重建：录完一段后本进程的音频时钟偶尔起不来（HAL 报 stop、时间倒退、一直“评估缓冲”），换一个新播放器就好。
     private(set) var player = AVPlayer.caploPlayer()
     /// 一次卡住只重建一次，避免反复重建。
@@ -28,7 +29,7 @@ final class VideoEditorModel {
     @ObservationIgnored private var itemStatusObservation: NSKeyValueObservation?
     @ObservationIgnored private var itemFailureObserver: NSObjectProtocol?
     @ObservationIgnored let canvas = CanvasPresenter()
-    let audioTracks: Set<AudioTrack>
+    private(set) var audioTracks: Set<AudioTrack>
     var edit: VideoEdit
     var history = EditHistory()
     var selectedClip: UUID?
@@ -140,6 +141,12 @@ final class VideoEditorModel {
         if let size = entry.document.capture?.pixelSize, size.width > 0, size.height > 0 { return size.width / size.height }
         return 16.0 / 9
     }
+    /// 播放头（或掠览处）那一帧画面的像素尺寸：导入的视频可能与录制画面比例不同，画布上的遮罩、文字编辑框按它对位。
+    var sourcePixelSize: CGSize {
+        let fallback = CGSize(width: 1920, height: 1080)
+        let size = edit.sourceTime(at: skimPosition ?? position).flatMap { entry.document.pixelSize(atSource: $0) } ?? entry.document.capture?.pixelSize ?? fallback
+        return size.width > 0 && size.height > 0 ? size : fallback
+    }
     /// 拖边裁剪时画布正在显示的源时间（只读，供测试核对）。
     var edgePreviewSource: Double? { edgePreview?.source }
     /// 指针事件只解析一次；重建播放项不再在主线程重复解 JSON。
@@ -163,9 +170,99 @@ final class VideoEditorModel {
 
     init(entry: LibraryEntry) {
         self.entry = entry; edit = VideoEdit(duration: entry.document.duration)
-        audioTracks = Set(AudioTrack.allCases.filter { track in
-            entry.document.segments.contains { $0.files[track == .system ? .systemAudio : .microphone] != nil }
+        audioTracks = Self.recordedTracks(in: entry.document)
+    }
+    private static func recordedTracks(in document: ProjectDocument) -> Set<AudioTrack> {
+        Set(AudioTrack.allCases.filter { track in
+            document.segments.contains { $0.files[track == .system ? .systemAudio : .microphone] != nil }
         })
+    }
+
+    // MARK: 导入视频与音乐
+
+    /// 正在把外面的文件收进工程（复制，竖拍或 HDR 的视频还要先转一遍）。
+    private(set) var importing = false
+    /// 音乐文件的波形，按工程内路径存；后台读，读到一份时间线重画一次。
+    private(set) var musicPeaks: [String: AudioPeaks] = [:]
+    @ObservationIgnored private var musicPeakTasks: [String: Task<Void, Never>] = [:]
+
+    /// 时间线上一块素材在源时间里能伸缩的范围：它所属那份素材的首尾（见 `ProjectDocument.assetRange`）。
+    func sourceBounds(of clip: VideoClip) -> Range<Double> { entry.document.assetRange(containing: clip.sourceStart) }
+    /// 这一块引用的是导入的视频（没有指针数据，光标相关的选项对它没有意义）。
+    func isImported(_ clip: VideoClip) -> Bool { clip.card == nil && entry.document.isImported(source: clip.sourceStart) }
+
+    /// 导入一个视频：接到成片末尾，之后可以拖到任意位置。一步撤销（撤销的是时间线上那一块，文件留在工程里）。
+    func importVideo(from source: URL) {
+        guard ready, !importing, !exporting else { return }
+        endInteraction(); pause()
+        importing = true
+        Task {
+            defer { importing = false }
+            do {
+                // 清单要变长：先把排着的写盘做完，免得旧队列拿旧清单校验新时间线。
+                guard settleSave() else { return }
+                let imported = try await MediaImport.appendVideo(source, to: entry.url)
+                guard !closed else { return }
+                entry = LibraryEntry(url: entry.url, document: imported.document, modifiedAt: entry.modifiedAt)
+                audioTracks = Self.recordedTracks(in: imported.document)
+                saver = EditSaveQueue(url: entry.url, document: imported.document)
+                var created: UUID?
+                commit { created = $0.appendImportedClip(sourceStart: imported.sourceRange.lowerBound, duration: imported.sourceRange.upperBound - imported.sourceRange.lowerBound, hasAudio: imported.hasAudio, title: source.deletingPathExtension().lastPathComponent) }
+                reloadAnalysis()
+                if let created, let clip = edit.clips.first(where: { $0.id == created }) {
+                    selectClip(created); seek(clip.timelineStart ?? 0); reveal(created)
+                }
+            } catch { if !closed { self.error = String(localized: "导入失败：\(error.localizedDescription)") } }
+        }
+    }
+
+    /// 导入一段音乐：从播放头处放到音乐轨上（放到文件结尾或成片结尾为止）。一步撤销。
+    func importMusic(from source: URL) {
+        guard ready, !importing, !exporting else { return }
+        guard edit.duration - position >= VideoEdit.minimumClipDuration || edit.duration >= VideoEdit.minimumClipDuration else {
+            error = String(localized: "时间线是空的，先放上画面再加音乐。"); return
+        }
+        endInteraction()
+        importing = true
+        let anchor = edit.duration - position >= VideoEdit.minimumClipDuration ? position : 0
+        Task {
+            defer { importing = false }
+            do {
+                let music = try await MediaImport.importMusic(source, into: entry.url)
+                guard !closed else { return }
+                var created: UUID?
+                commit { created = $0.addMusic(music, at: anchor) }
+                if let created, edit.mediaClips(.music).contains(where: { $0.id == created }) {
+                    select(.media(.music, created)); reveal(created)
+                }
+            } catch { if !closed { self.error = String(localized: "导入失败：\(error.localizedDescription)") } }
+        }
+    }
+
+    /// 当前选中的音乐块。
+    var selectedMusic: VideoClip? {
+        guard selectedMedia == .music, let id = selectedMediaID else { return nil }
+        return edit.mediaClips(.music).first { $0.id == id }
+    }
+    /// 改选中音乐块的参数（音量、淡入淡出、循环）。
+    func updateMusic(_ id: UUID, _ change: (inout MusicSource) -> Void) {
+        guard var values = edit.musicClips, let number = values.firstIndex(where: { $0.id == id }), var music = values[number].music else { return }
+        change(&music); values[number].music = music
+        edit.musicClips = values
+    }
+
+    /// 时间线要画哪些音乐文件的波形：没读过的在后台读。
+    func loadMusicPeaks() {
+        for file in Set((edit.musicClips ?? []).compactMap { $0.music?.file }) where musicPeaks[file] == nil && musicPeakTasks[file] == nil {
+            let url = entry.url
+            musicPeakTasks[file] = Task { [weak self] in
+                let peaks = try? await TimelineAnalysis.musicPeaks(project: url, file: file)
+                guard let self, !self.closed else { return }
+                // 读不出来也记一份空的：不反复重试，块上只是没有波形。
+                self.musicPeaks[file] = peaks ?? AudioPeaks([])
+                self.musicPeakTasks[file] = nil
+            }
+        }
     }
 
     /// 本工程当前有没有可编辑的人像：录制时开了摄像头，且摄像头片段没有被从时间线上删光。
@@ -223,10 +320,12 @@ final class VideoEditorModel {
             let url = entry.url, document = entry.document, wallpaper = DesktopWallpaper.currentURL()
             // 用户设过"新录制也用这个水印"：新工程第一次打开时带上它。
             let watermark = Watermark.defaultForNewProjects()
+            // 设置里定的新录制起点（自动聚焦、光标效果、画面布局）；偏好与预设都在主线程读好再带过去。
+            let defaults = NewRecordingDefaults.current()
             let camera = document.segments.contains { $0.files[.camera] != nil }
             let system = audioTracks.contains(.system), microphone = audioTracks.contains(.microphone)
             let (loaded, missing) = try await Task.detached(priority: .userInitiated) { () throws -> (VideoEdit, Int) in
-                var edit = try EditStorage.load(in: url, document: document, wallpaper: wallpaper, watermark: watermark)
+                var edit = try EditStorage.load(in: url, document: document, wallpaper: wallpaper, watermark: watermark, defaults: defaults)
                 edit.prepareLayerEditing(camera: camera, system: system, microphone: microphone)
                 return (edit, ProjectStorage.missingMedia(in: document, at: url).count)
             }.value
@@ -257,7 +356,7 @@ final class VideoEditorModel {
             reload()
             // 指针事件先在后台解出来（reload 也在等同一份）：第一次用到相机时不必在主线程上同步读盘。
             pointerPreloadTask = Task { [weak self] in _ = await self?.loadPointers() }
-            reloadAnalysis()
+            reloadAnalysis(); loadMusicPeaks()
         } catch { self.error = error.localizedDescription; saveStatus = String(localized: "未能打开编辑"); ready = false; loading = false; lease = nil }
     }
 
@@ -286,6 +385,7 @@ final class VideoEditorModel {
     private func finishChange(previous: VideoEdit) {
         guard edit != previous else { restorePlayheadFrame(); return }
         edit.constrainTimelineFocuses()
+        edit.constrainMusic()
         edit.normalizeTimelineRows()
         // 兜底：任何一条编辑路径把版本号写歪，都会在这里被按内容重新算对，
         // 而不是在校验时变成一句"版本不支持"甩给用户。
@@ -302,7 +402,7 @@ final class VideoEditorModel {
         }
         history.record(previous)
         edgePreview = nil
-        save(); normalizeSelection(); refreshPresentation()
+        save(); normalizeSelection(); refreshPresentation(); loadMusicPeaks()
     }
     /// 裁剪交互没有产生新的时间线（取消、拖回原位、校验失败）：画布从边缘帧回到播放头那一帧。
     private func restorePlayheadFrame() {
@@ -338,12 +438,12 @@ final class VideoEditorModel {
     func undo() {
         settleInteraction()
         guard let previous = history.undo(current: edit) else { return }
-        edit = previous; syncKeystrokeSample(refresh: false); save(); normalizeSelection(); refreshPresentation()
+        edit = previous; syncKeystrokeSample(refresh: false); save(); normalizeSelection(); refreshPresentation(); loadMusicPeaks()
     }
     func redo() {
         settleInteraction()
         guard let next = history.redo(current: edit) else { return }
-        edit = next; syncKeystrokeSample(refresh: false); save(); normalizeSelection(); refreshPresentation()
+        edit = next; syncKeystrokeSample(refresh: false); save(); normalizeSelection(); refreshPresentation(); loadMusicPeaks()
     }
     /// 把示例键帽的标记对齐到"面板开着且没在播放"。历史快照里可能带着当时的标记，所以撤销重做之后也要调一次。
     private func syncKeystrokeSample(refresh: Bool = true) {
@@ -1065,6 +1165,12 @@ final class VideoEditorModel {
             }
         }
     }
+    /// 聚焦面板的"自动聚焦"开关。工程里一个自动镜头都没有（新录制默认关着自动聚焦）时打开，先按点击生成一批。
+    func setAutomaticFocus(_ enabled: Bool) {
+        guard enabled, !edit.focuses.contains(where: { $0.automatic }) else { commit { $0.automaticFocus = enabled }; return }
+        Task { await regenerateFocus() }
+    }
+
     /// 源事件在后台加载；完成后只替换自动镜头，保留手动编辑与统一撤销记录。
     func regenerateFocus() async {
         let duration = entry.document.duration
@@ -1254,6 +1360,7 @@ final class VideoEditorModel {
         if let observer { player.removeTimeObserver(observer) }; observer = nil
         if let endObserver { NotificationCenter.default.removeObserver(endObserver) }; endObserver = nil
         reloadTask?.cancel(); analysisTask?.cancel(); exportTask?.cancel(); posterTask?.cancel(); seekTask?.cancel(); voiceProcessingTask?.cancel()
+        musicPeakTasks.values.forEach { $0.cancel() }; musicPeakTasks.removeAll()
         pointerPreloadTask?.cancel(); pointerPreloadTask = nil
         // 转写与打字防抖也要停：关窗之后它们还在读这份工程，用户此刻已经可以去删它了。
         transcriptionTask?.cancel(); transcriptionTask = nil; transcription = nil

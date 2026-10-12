@@ -84,9 +84,7 @@ final class TextCanvasView: NSView {
 
     /// 另一块可吸附的东西：当前时刻画面层所在的矩形（全屏文字与卡片淡出、分屏退到一栏都算进去）。
     private func snapTargets(_ canvas: CGRect) -> [CGRect] {
-        let full = model.entry.document.capture?.pixelSize ?? CGSize(width: 1920, height: 1080)
-        let source = SceneRenderer.croppedSourceSize(full.width > 0 && full.height > 0 ? full : CGSize(width: 1920, height: 1080),
-                                                     layout: model.edit.layout)
+        let source = SceneRenderer.croppedSourceSize(model.sourcePixelSize, layout: model.edit.layout)
         let stage = model.edit.stage(at: time)
         guard stage.alpha > 0.05 else { return [] }
         let picture = SceneRenderer.geometry(edit: SceneRenderer.stagedEdit(model.edit, stage: stage), sourceSize: source, size: canvas.size).rect

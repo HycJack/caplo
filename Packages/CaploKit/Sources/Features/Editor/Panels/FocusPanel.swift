@@ -40,7 +40,7 @@ struct FocusPanel: View {
     }
 
     var body: some View {
-        Toggle(isOn: Binding(get: { model.edit.automaticFocus }, set: { value in model.commit { $0.automaticFocus = value } })) {
+        Toggle(isOn: Binding(get: { model.edit.automaticFocus }, set: { model.setAutomaticFocus($0) })) {
             SettingLabel(String(localized: "自动聚焦"), systemImage: "sparkles",
                          tip: String(localized: "按点击推近并平滑跟随鼠标"))
         }.toggleStyle(StudioToggleStyle())

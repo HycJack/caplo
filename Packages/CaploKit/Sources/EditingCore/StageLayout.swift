@@ -217,6 +217,8 @@ extension VideoEdit {
             case .camera: cameraClips = values
             case .system: systemClips = values
             case .microphone: microphoneClips = values
+            // 音乐钉在成片时间上，插入卡片不推它（背景音乐不该因为中间多了一张卡片就断一截）。
+            case .music: break
             }
         }
         for number in focuses.indices {

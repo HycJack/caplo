@@ -38,7 +38,7 @@ struct TimelineViewportBridge: NSViewRepresentable {
     func updateNSView(_ view: TimelineViewportView, context: Context) {
         view.materialOpaqueOverride = materialOpaquePreview
         view.liveResizing = viewport.liveResizing
-        view.update(edit: model.edit, analysis: model.analysis, selection: model.selectedClipIDs,
+        view.update(edit: model.edit, analysis: model.analysis, musicWaves: model.musicPeaks.count, selection: model.selectedClipIDs,
                     primary: model.selectedClip, focus: model.selectedFocus, mask: model.selectedMask, text: model.selectedText, caption: model.selectedCaption,
                     keys: model.keyTimeline, keyRun: model.selectedKeys,
                     zoom: viewport.zoom, fit: viewport.fitRequest, heights: viewport.trackHeights, reveal: model.revealRequest)
@@ -48,7 +48,8 @@ struct TimelineViewportBridge: NSViewRepresentable {
 
 /// 固定轨头和滚动内容共用一个有限尺寸视口，绘制量随窗口宽度变化，不随视频总长度变化。
 /// 播放头是独立图层：暂停时跟随模型位置；播放时由显示链路按屏幕刷新率读取播放器时基直接驱动，
-/// 与 30 fps 的模型回调解耦，轨道本身只在视口变化时重绘。滚动条为自绘覆盖式细条，只在内容超出时出现。
+/// 与 30 fps 的模型回调解耦，轨道本身只在视口变化时重绘。横竖两条滚动条都是自绘的覆盖式细条，只在内容超出时出现；
+/// 横向浏览靠触控板横滑 / Shift + 滚轮 / 这条细条，缩放靠工具栏滑条、⌥ + 滚轮与触控板捏合（原来底部的总览条 2026-10-13 按用户要求去掉）。
 @MainActor
 final class TimelineViewportView: NSView {
     private let model: VideoEditorModel
@@ -64,6 +65,8 @@ final class TimelineViewportView: NSView {
     private var keySelection: UUID?
     /// 录制时记下的按键：素材在后台解完才有，所以随 `update` 传进来，变了就重排按键轨。
     private var keyTimeline = KeyTimeline()
+    /// 已读到波形的音乐文件数：多读到一份就重画一次（波形本身从模型里取）。
+    private var musicWaves = 0
     private var primary: UUID?
     private var scale = 60.0
     private var offset = 0.0
@@ -88,7 +91,6 @@ final class TimelineViewportView: NSView {
     private var playbackFollow = TimelinePlaybackFollow()
     private var lastDisplayTimestamp: Double?
     private var followPausedUntil = 0.0
-    private let navigator = TimelineNavigatorView()
     private let skimmer = CALayer()
     private let skimmerHandle = CAShapeLayer()
     private let skimmerTime = CATextLayer()
@@ -100,6 +102,16 @@ final class TimelineViewportView: NSView {
     private var mouseTracking: NSTrackingArea?
     private var tooltipLabels: [NSView.ToolTipTag: String] = [:]
     private var hoveredPoint: CGPoint?
+    /// 指针最近一次在视口里的位置，以及它底下的块：块的提亮与两端把手只在悬停时出现
+    /// （2026-10-13 用户要求把手不常驻）。滚动、缩放后指针没动但底下的块变了，按存下的位置重新找一次。
+    private var pointerLocation: CGPoint?
+    private var hoveredBlock: UUID?
+    /// 悬停的提亮与把手放在独立图层上：画在轨道位图里的东西只能"有或没有"，图层才能淡入淡出。
+    /// 容器裁在轨道内容区里，块滚到轨头或标尺底下时跟着被裁掉。
+    private let hoverContainer = CALayer()
+    private let hoverGlow = CAShapeLayer()
+    private let hoverHandles = CAShapeLayer()
+    private var hoverShownID: UUID?
     private var retainedExtent = 0.0
     private var ghostGrabOffset = CGPoint.zero
     private(set) var dragGhostVisible = false
@@ -107,9 +119,10 @@ final class TimelineViewportView: NSView {
     /// 当前 draw 调用的目标上下文；标签不依赖图标等嵌套绘制暂时设置的 NSGraphicsContext。
     private var textDrawingContext: CGContext?
 
-    /// 纵向滚动保留紧凑滑块；水平导航由独立的时间线总览条承担。
+    /// 两条覆盖式细滑块：内容超出视口时才有，矩形为空表示不画也不响应。
     private var verticalKnob = CGRect.zero
-    private var scrollDrag: (origin: CGPoint, offset: Double)?
+    private var horizontalKnob = CGRect.zero
+    private var scrollDrag: (origin: CGPoint, offset: Double, horizontal: Bool)?
     private var verticalOffset = 0.0
     /// 色块已经按可见行绘制，分界拖动也更新当前几何，避免冻结旧滚动条和行背景。
     var liveResizing = false {
@@ -158,18 +171,31 @@ final class TimelineViewportView: NSView {
     static let blockInset = 4.0
     private var rowHeight: Double { Self.rowHeight }
     private var totalHeight: Double { Double(rows.count) * rowHeight }
+    /// 行下面留的一小条空白：点它定位播放头、取消选中，拖块到"最后一行之下"新开一行也落在这里。
+    static let spareHeight = 14.0
+    /// 标尺高度，以及第一行的起点：标尺与第一行之间留 6 点，块不贴着刻度（这 6 点不随纵向滚动走，按在上面等同按标尺）。
+    static let rulerHeight = 28.0
+    static let tracksTop = rulerHeight + 6
+    private var tracksTop: Double { Self.tracksTop }
+    /// 把现有的行全部摆下所需的视口高度（标尺 + 各行 + 一小条空白）。时间线窗格按它收放：
+    /// 只有一两条轨时不占着半个窗口的空地（2026-10-13 用户指出）。
+    var fittingHeight: CGFloat { CGFloat(tracksTop + Double(max(1, rows.count)) * rowHeight + Self.spareHeight) }
+    /// 行数变了、或一次拖动结束时通知窗格重新量高度。拖动途中不改高度：窗格贴底、向上长，行会在鼠标底下挪位。
+    var onFittingHeightChange: (() -> Void)?
+    var isDraggingBlocks: Bool { drag != nil }
+    private var reportedRowCount = -1
     /// 时间线到内容结尾为止，只留 48 点让末尾的把手好抓；不再在片子后面拖出半屏空白。
     /// 交互期间范围只可向外扩展；裁短时收缩视口会反向改变拖动增量。
     private var timelineExtent: Double {
         max(retainedExtent, edit.duration + 48 / scale)
     }
-    private func rowY(_ number: Int) -> Double { 28 + Double(number) * rowHeight - verticalOffset }
+    private func rowY(_ number: Int) -> Double { tracksTop + Double(number) * rowHeight - verticalOffset }
     private func rebuildBlocks() {
         var values: [UUID: Block] = [:]
         // 卡片与定格不参与"录制画面 0N"的编号：它们不是用户录下来的画面，占一个号只会把后面的都推后。
         let screenNumbers = Dictionary(uniqueKeysWithValues: edit.clips.filter { $0.card == nil && $0.holdSource == nil }
             .enumerated().map { ($0.element.id, $0.offset) })
-        for role in [TimelineMedia.screen, .camera, .system, .microphone] {
+        for role in [TimelineMedia.screen, .camera, .system, .microphone, .music] {
             if role == .camera, !model.entry.document.segments.contains(where: { $0.files[.camera] != nil }) { continue }
             if role == .system, !model.audioTracks.contains(.system) { continue }
             if role == .microphone, !model.audioTracks.contains(.microphone) { continue }
@@ -178,10 +204,10 @@ final class TimelineViewportView: NSView {
             let clips = edit.mediaClips(role), timing = TimelineIndex(clips: clips)
             for (number, clip) in clips.enumerated() {
                 let hold = clip.holdSource != nil
-                let title = role == .screen ? String(localized: "录制画面") : role == .camera ? String(localized: "摄像头") : role == .system ? String(localized: "系统声音") : String(localized: "麦克风")
+                let title = role == .screen ? String(localized: "录制画面") : role == .camera ? String(localized: "摄像头") : role == .system ? String(localized: "系统声音") : role == .music ? String(localized: "音乐") : String(localized: "麦克风")
                 let labelNumber = role == .screen ? (screenNumbers[clip.id] ?? number) : number
-                // 卡片默认叫它的第一行字；清掉自定义名之后回到这里，不能变成一句"录制画面 0N"。
-                let defaultTitle = clip.card?.defaultTitle ?? (hold ? String(localized: "定格画面") : title + String(format: " %02d", labelNumber + 1))
+                // 卡片默认叫它的第一行字；清掉自定义名之后回到这里，不能变成一句"录制画面 0N"。音乐块默认叫它的文件名。
+                let defaultTitle = clip.card?.defaultTitle ?? clip.music?.name ?? (hold ? String(localized: "定格画面") : title + String(format: " %02d", labelNumber + 1))
                 values[clip.id] = Block(id: clip.id, role: role, title: clip.title ?? defaultTitle, defaultTitle: defaultTitle,
                                         start: timing.boundaries[number], duration: clip.duration, span: nil, card: clip.card != nil, hold: hold)
             }
@@ -253,13 +279,7 @@ final class TimelineViewportView: NSView {
                 if block.role == .microphone, audioRows[.microphone] == nil { audioRows[.microphone] = number }
             }
         }
-        let items = blocks.map { block in
-            let kind: TimelineNavigatorItem.Kind
-            // 导航条只分四类；遮罩沿用聚焦那一类，不为它新增一档。
-            switch block.role { case .screen: kind = .screen; case .camera: kind = .camera; case .system, .microphone: kind = .audio; case nil: kind = .focus }
-            return TimelineNavigatorItem(id: block.id, start: block.start, duration: block.duration, kind: kind)
-        }
-        navigator.update(items: items, duration: timelineExtent, visibleStart: offset, visibleDuration: contentWidth / scale, playhead: playbackPosition)
+        if rows.count != reportedRowCount { reportedRowCount = rows.count; onFittingHeightChange?() }
     }
     /// 字幕轨上的块：一句一块，被剪辑切成多段时取包络。
     private func captionBlocks(using timing: TimelineIndex) -> [Block] {
@@ -281,7 +301,7 @@ final class TimelineViewportView: NSView {
         return byCue.values.sorted { $0.start < $1.start }
     }
 
-    private var trackArea: CGRect { CGRect(x: 0, y: 28, width: bounds.width, height: max(1, bounds.height - 28 - TimelineNavigatorView.preferredHeight)) }
+    private var trackArea: CGRect { CGRect(x: 0, y: tracksTop, width: bounds.width, height: max(1, bounds.height - tracksTop)) }
     private(set) var trackDrawCount = 0
     private(set) var visibleClipDrawCount = 0
     private(set) var visibleFocusDrawCount = 0
@@ -292,7 +312,6 @@ final class TimelineViewportView: NSView {
     var materialOpaqueOverride: Bool? {
         didSet {
             guard oldValue != materialOpaqueOverride else { return }
-            navigator.materialOpaqueOverride = materialOpaqueOverride
             refreshMaterialAppearance()
         }
     }
@@ -326,26 +345,25 @@ final class TimelineViewportView: NSView {
         layer?.isOpaque = false
         playhead.backgroundColor = CaploNSColor.record.cgColor
         layer?.addSublayer(playhead)
-        // 标尺内的播放头把手：底部收尖的小标签，拖动时也更容易看清落点。
-        let handle = CGMutablePath()
-        handle.move(to: CGPoint(x: 0, y: 0)); handle.addLine(to: CGPoint(x: 11, y: 0)); handle.addLine(to: CGPoint(x: 11, y: 7))
-        handle.addLine(to: CGPoint(x: 5.5, y: 12)); handle.addLine(to: CGPoint(x: 0, y: 7)); handle.closeSubpath()
-        playheadHandle.path = handle
-        playheadHandle.fillColor = CaploNSColor.record.cgColor
-        playheadHandle.bounds = CGRect(x: 0, y: 0, width: 11, height: 12)
+        // 标尺内的播放头把手：一个小菱形，平时只有描边，按住拖动时填实（参照 hyperframes，2026-10-13）；
+        // 细线从菱形下尖开始，不穿过空心。
+        var turn = CGAffineTransform(translationX: 6, y: 6).rotated(by: .pi / 4)
+        playheadHandle.path = CGPath(roundedRect: CGRect(x: -3.5, y: -3.5, width: 7, height: 7), cornerWidth: 1.5, cornerHeight: 1.5, transform: &turn)
+        playheadHandle.fillColor = NSColor.clear.cgColor
+        playheadHandle.strokeColor = CaploNSColor.record.cgColor
+        playheadHandle.lineWidth = 1.5
+        playheadHandle.bounds = CGRect(x: 0, y: 0, width: 12, height: 12)
         playheadHandle.anchorPoint = CGPoint(x: 0.5, y: 0)
         layer?.addSublayer(playheadHandle)
         setAccessibilityRole(.group)
         setAccessibilityLabel(String(localized: "视频时间线，方向键逐帧定位，空格播放，Command A 全选片段"))
         configureOverlays()
-        addSubview(navigator)
-        navigator.onRangeChange = { [weak self] start, duration in self?.navigate(start: start, duration: duration) }
         rebuildBlocks()
         // 从下一轮开始观察，避免把播放时间加入 SwiftUI makeNSView 的依赖集合。
         Task { @MainActor [weak self] in self?.observePlayhead(); self?.observePlaying(); self?.observeSkimmer() }
     }
     required init?(coder: NSCoder) { fatalError("不支持归档初始化") }
-    func detach() { detached = true; EditorMaterialDrawing.stopObserving(&materialObserver); clearDrag(); navigator.detach(); model.skim(nil); stopDisplayLink() }
+    func detach() { detached = true; EditorMaterialDrawing.stopObserving(&materialObserver); clearDrag(); model.skim(nil); stopDisplayLink() }
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
@@ -358,7 +376,7 @@ final class TimelineViewportView: NSView {
 
     /// SwiftUI 每次刷新都会调用；只有内容或几何变化才重绘，与每帧播放位置分离。
     private var lastReveal = 0
-    func update(edit: VideoEdit, analysis: TimelineAnalysis, selection: Set<UUID>, primary: UUID?, focus: UUID?, mask: UUID? = nil, text: UUID? = nil, caption: UUID? = nil, keys: KeyTimeline = KeyTimeline(), keyRun: UUID? = nil, zoom: Double, fit: Int, heights: [Double]? = nil, reveal: (id: UUID, serial: Int)? = nil) {
+    func update(edit: VideoEdit, analysis: TimelineAnalysis, musicWaves: Int = 0, selection: Set<UUID>, primary: UUID?, focus: UUID?, mask: UUID? = nil, text: UUID? = nil, caption: UUID? = nil, keys: KeyTimeline = KeyTimeline(), keyRun: UUID? = nil, zoom: Double, fit: Int, heights: [Double]? = nil, reveal: (id: UUID, serial: Int)? = nil) {
         var changed = false
         let keysChanged = keys != keyTimeline
         if keysChanged || keyRun != keySelection { keyTimeline = keys; keySelection = keyRun; changed = true }
@@ -369,6 +387,7 @@ final class TimelineViewportView: NSView {
         if self.edit.clips != edit.clips { index = TimelineIndex(clips: edit.clips) }
         if self.edit != edit || self.selection != selection || self.primary != primary || self.focus != focus || self.maskSelection != mask || self.textSelection != text || self.captionSelection != caption { changed = true }
         if analysis.system.count != self.analysis.system.count || analysis.microphone.count != self.analysis.microphone.count { changed = true }
+        if musicWaves != self.musicWaves { self.musicWaves = musicWaves; changed = true }
         let contentChanged = self.edit != edit || keysChanged
         self.edit = edit; if contentChanged { rebuildBlocks() }; self.analysis = analysis; self.selection = selection; self.primary = primary; self.focus = focus; self.maskSelection = mask; self.textSelection = text; self.captionSelection = caption
         let nextScale = drag == nil ? 60 * pow(2, zoom) : scale
@@ -437,8 +456,7 @@ final class TimelineViewportView: NSView {
         super.layout()
         viewport.width = contentWidth
         if pendingFit, bounds.width > timeOrigin + 8 { pendingFit = false; fitToWidth() }
-        navigator.frame = CGRect(x: timeOrigin, y: max(28, bounds.height - TimelineNavigatorView.preferredHeight), width: contentWidth, height: TimelineNavigatorView.preferredHeight)
-        clampOffset(); refreshHoveredPreview(); updateScroller(); updatePlayhead()
+        clampOffset(); refreshHoveredPreview(); updateHoverLayers(); updateScroller(); updatePlayhead()
         // 纵向范围可能随高度重新约束，图层按钮和行底图必须在同一布局周期刷新。
         needsDisplay = true
         window?.invalidateCursorRects(for: self)
@@ -506,7 +524,7 @@ final class TimelineViewportView: NSView {
     }
     /// 接近右缘后连续平移，把播放头稳定留在视窗右侧；按真实帧间隔平滑，不整页跳转。
     private func followPlayhead(elapsed: Double) {
-        guard drag == nil, scrollDrag == nil, !navigator.isInteracting, CACurrentMediaTime() >= followPausedUntil else { return }
+        guard drag == nil, scrollDrag == nil, CACurrentMediaTime() >= followPausedUntil else { return }
         let next = playbackFollow.advance(offset: offset, playhead: playbackPosition, visibleDuration: contentWidth / scale, elapsed: elapsed)
         guard abs(next - offset) > 0.00001 else { return }
         offset = next
@@ -520,30 +538,30 @@ final class TimelineViewportView: NSView {
         scale = 60 * pow(2, viewport.zoom)
         offset = 0; retainedExtent = 0
     }
-    private func navigate(start: Double, duration: Double) {
-        guard start.isFinite, duration.isFinite, duration > 0 else { return }
-        hoveredPoint = nil; model.skim(nil)
-        playbackFollow.reset(); followPausedUntil = CACurrentMediaTime() + 0.5
-        scale = min(960, max(60 * pow(2, -12), contentWidth / duration))
-        viewport.zoom = log2(scale / 60)
-        offset = max(0, start)
-        retainedExtent = max(retainedExtent, offset + contentWidth / scale)
-        changedViewport()
-    }
     private func updatePlayhead() {
         let point = x(playbackPosition)
         CATransaction.begin(); CATransaction.setDisableActions(true)
         let hidden = point < timeOrigin || point > bounds.width - 4
         playhead.isHidden = hidden; playheadHandle.isHidden = hidden
-        playhead.frame = CGRect(x: point - 0.75, y: 0, width: 1.5, height: trackArea.maxY)
-        playheadHandle.position = CGPoint(x: point, y: 0)
+        playhead.frame = CGRect(x: point - 0.5, y: 11.5, width: 1, height: max(0, trackArea.maxY - 11.5))
+        playheadHandle.position = CGPoint(x: point, y: 0.5)
+        let scrubbing: Bool
+        if case .scrub = drag?.kind { scrubbing = true } else { scrubbing = false }
+        playheadHandle.fillColor = scrubbing ? CaploNSColor.record.cgColor : NSColor.clear.cgColor
         CATransaction.commit()
-        updateSkimmer(); navigator.updatePlayhead(playbackPosition)
+        updateSkimmer()
         setAccessibilityValue(TimelineTime.code(playbackPosition))
     }
-    /// 总览视窗和纵向滑块只更新几何；播放推进不重新采集或遍历素材。
+    /// 两条滑块只更新几何；播放推进不重新采集或遍历素材。
     private func updateScroller() {
-        navigator.updateVisibleRange(start: offset, duration: contentWidth / scale, totalDuration: timelineExtent)
+        // 横向：内容比视口长才有。贴着视口底边，落在行下面那条空白里，不占高度。
+        let visible = contentWidth / scale, extent = timelineExtent
+        // 时间线尽头本来就多留 48 点好抓把手，这一小截不算超出：适合窗口时不该冒出一条几乎满宽的滑块。
+        if (extent - visible) * scale > 48.5 {
+            let knobWidth = max(28, contentWidth * visible / extent)
+            let x = timeOrigin + (contentWidth - knobWidth) * (offset / max(0.000_001, extent - visible))
+            horizontalKnob = CGRect(x: x, y: bounds.height - 7, width: knobWidth, height: 5)
+        } else { horizontalKnob = .zero }
         let height = totalHeight
         if height > trackArea.height + 0.5 {
             let knobHeight = max(28, trackArea.height * trackArea.height / height)
@@ -553,7 +571,7 @@ final class TimelineViewportView: NSView {
     }
     private func drawScrollbars() {
         let alpha = scrollDrag == nil ? 0.38 : 0.7
-        for knob in [verticalKnob] where !knob.isEmpty {
+        for knob in [verticalKnob, horizontalKnob] where !knob.isEmpty {
             CaploNSColor.textTertiary.withAlphaComponent(alpha).setFill()
             NSBezierPath(roundedRect: knob, xRadius: 2.5, yRadius: 2.5).fill()
         }
@@ -561,21 +579,82 @@ final class TimelineViewportView: NSView {
     /// 命中滑块开始拖动；命中轨道空白则向该方向翻页。返回是否消耗了这次按下。
     private func beginScrollbarInteraction(at point: CGPoint) -> Bool {
         if !verticalKnob.isEmpty, point.x >= bounds.width - 14, trackArea.contains(point) {
-            if verticalKnob.insetBy(dx: -5, dy: -4).contains(point) { scrollDrag = (point, verticalOffset); needsDisplay = true; return true }
+            if verticalKnob.insetBy(dx: -5, dy: -4).contains(point) { scrollDrag = (point, verticalOffset, false); needsDisplay = true; return true }
             verticalOffset += (point.y < verticalKnob.midY ? -1 : 1) * trackArea.height * 0.8
             changedViewport(); return true
+        }
+        // 横向只认滑块本身：它压在行下面的空白上，那里按别处仍是"定位并取消选中"。
+        if !horizontalKnob.isEmpty, horizontalKnob.insetBy(dx: -4, dy: -5).contains(point) {
+            playbackFollow.reset()
+            scrollDrag = (point, offset, true); needsDisplay = true; return true
         }
         return false
     }
     private func dragScrollbar(to point: CGPoint) {
         guard let drag = scrollDrag else { return }
+        if drag.horizontal {
+            let visible = contentWidth / scale
+            let travel = max(1, contentWidth - horizontalKnob.width)
+            offset = drag.offset + (point.x - drag.origin.x) / travel * max(0, timelineExtent - visible)
+            followPausedUntil = CACurrentMediaTime() + 0.5
+            changedViewport(); return
+        }
         let height = totalHeight
         let travel = max(1, trackArea.height - verticalKnob.height)
         verticalOffset = drag.offset + (point.y - drag.origin.y) / travel * max(0, height - trackArea.height)
         changedViewport()
     }
+    private func updateHoveredBlock(at point: CGPoint?) {
+        pointerLocation = point
+        var next: UUID?
+        // 正拖着一块（挪动或拖边）时它一直算悬停：拖边途中指针难免滑出块外，把手不该跟着闪没。
+        if let drag, case .block(let block, _) = drag.kind { next = block.id }
+        else if let point, trackArea.contains(point), point.x >= timeOrigin {
+            next = hitBlock(at: point, row: Int((point.y - tracksTop + verticalOffset) / rowHeight))?.0.id
+        }
+        guard next != hoveredBlock else { return }
+        hoveredBlock = next; updateHoverLayers()
+    }
+    /// 把提亮与把手摆到悬停的块上。几何随视口立即更新；出现、消失、换到另一块时淡入淡出。
+    /// 把手是 2 点宽、12 点高的小胶囊，只在指针停在块上（或正拖着它的边）时出现，不随选中常驻（2026-10-13 用户要求）；
+    /// 按键块改不了长短、太窄的块放不下，都只提亮不出把手。整块被拖起来时原位只剩占位框，两样都收起。
+    private func updateHoverLayers() {
+        var target: (block: Block, row: Int)?
+        if let id = hoveredBlock, !isFloating(id), let row = rowByBlock[id], rows.indices.contains(row), let block = rows[row].first(where: { $0.id == id }) { target = (block, row) }
+        CATransaction.begin(); CATransaction.setDisableActions(true)
+        hoverContainer.frame = CGRect(x: timeOrigin, y: tracksTop, width: max(0, bounds.width - timeOrigin), height: trackArea.height)
+        if let target {
+            let rect = paintRect(target.block, row: target.row).offsetBy(dx: -timeOrigin, dy: -tracksTop)
+            let radius = min(Self.blockRadius, rect.width / 2, rect.height / 2)
+            hoverGlow.path = CGPath(roundedRect: rect, cornerWidth: radius, cornerHeight: radius, transform: nil)
+            let handles = CGMutablePath()
+            if !target.block.keys, rect.width >= 24 {
+                let height = min(12, max(4, rect.height - 14))
+                for x in [rect.minX + 4, rect.maxX - 6] {
+                    handles.addRoundedRect(in: CGRect(x: x, y: rect.midY - height / 2, width: 2, height: height), cornerWidth: 1, cornerHeight: 1)
+                }
+            }
+            hoverHandles.path = handles
+        }
+        let shown = target?.block.id
+        if shown != hoverShownID {
+            hoverShownID = shown
+            for layer in [hoverGlow, hoverHandles] {
+                let from = shown == nil ? (layer.presentation()?.opacity ?? layer.opacity) : 0
+                layer.opacity = shown == nil ? 0 : 1
+                layer.removeAnimation(forKey: "fade")
+                guard !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else { continue }
+                let fade = CABasicAnimation(keyPath: "opacity")
+                fade.fromValue = from; fade.toValue = layer.opacity
+                fade.duration = shown == nil ? 0.18 : 0.14
+                fade.timingFunction = CAMediaTimingFunction(name: .easeOut)
+                layer.add(fade, forKey: "fade")
+            }
+        }
+        CATransaction.commit()
+    }
     private func changedViewport() {
-        clampOffset(); refreshHoveredPreview(); updateScroller(); updatePlayhead(); updateTooltips()
+        clampOffset(); refreshHoveredPreview(); updateHoveredBlock(at: pointerLocation); updateHoverLayers(); updateScroller(); updatePlayhead(); updateTooltips()
         needsDisplay = true; window?.invalidateCursorRects(for: self)
     }
     override func scrollWheel(with event: NSEvent) {
@@ -595,6 +674,25 @@ final class TimelineViewportView: NSView {
         }
         changedViewport()
         if let point = dragLocation { updateDrag(at: point, modifiers: dragModifiers) }
+    }
+
+    /// 触控板捏合：以指针所在的时刻为锚点缩放，范围与工具栏滑条、⌥ + 滚轮一致。
+    override func magnify(with event: NSEvent) {
+        guard drag == nil, scrollDrag == nil else { return }
+        playbackFollow.reset(); followPausedUntil = CACurrentMediaTime() + 0.5
+        // 倍率是 2 的指数：手势给的是相对增量，取对数后相加，张开一倍就是放大一倍。
+        setZoom(viewport.zoom + log2(max(0.1, 1 + event.magnification)),
+                anchorX: min(bounds.width - 8, max(timeOrigin, convert(event.locationInWindow, from: nil).x)))
+    }
+    /// 以视口里的某个横坐标为锚点改倍率：锚点底下的那个时刻缩放前后不动。
+    private func setZoom(_ value: Double, anchorX: Double) {
+        let next = min(4, max(viewport.minimumZoom(for: edit.duration), value))
+        guard next != viewport.zoom else { return }
+        let anchor = time(anchorX)
+        viewport.zoom = next; scale = 60 * pow(2, next)
+        offset = anchor - (anchorX - timeOrigin) / scale
+        retainedExtent = 0
+        changedViewport()
     }
 
     /// 拖动预览只改变可见分组；松手后才提交 rowGroups 和统一层序。
@@ -646,6 +744,23 @@ final class TimelineViewportView: NSView {
                       width: rect.width > 8 ? rect.width - 2 : rect.width, height: Self.keyBlockHeight)
     }
     static let keyBlockHeight = 24.0
+    static let blockRadius = 8.0
+    /// 画出来的块：比命中矩形在右端少 1 点。块没有描边，首尾相接的两块（切开的片段）靠这道缝分开；
+    /// 命中、光标与吸附仍按 `blockRect`，缝不影响操作。
+    private func paintRect(_ block: Block, row: Int) -> CGRect {
+        let rect = blockRect(block, row: row)
+        guard !block.keys, rect.width > 6 else { return rect }
+        return CGRect(x: rect.minX, y: rect.minY, width: rect.width - 1, height: rect.height)
+    }
+    /// 块的实色底：类别色往深色底压一半。令牌里的类别色是给图标和波形用的浅粉彩，直接铺满太亮、白字也读不清；
+    /// 压暗后不透明，行底色与玻璃不再从块里透出来。
+    private static var blockFills: [NSColor: NSColor] = [:]
+    private static func blockFill(_ tint: NSColor) -> NSColor {
+        if let cached = blockFills[tint] { return cached }
+        let value = tint.usingColorSpace(.sRGB)?.blended(withFraction: 0.52, of: NSColor(srgbRed: 0.09, green: 0.09, blue: 0.11, alpha: 1)) ?? tint
+        blockFills[tint] = value
+        return value
+    }
     /// 同一行里紧跟在后面那一块的起点：短块的最小外观宽度不越过它。
     private var nextStart: [UUID: Double] = [:]
     private func color(for block: Block) -> NSColor {
@@ -654,7 +769,7 @@ final class TimelineViewportView: NSView {
         // 卡片是插进画面轨的一段文字画面，按文字层的颜色画，一眼看得出它不是录下来的画面。
         if block.text || block.card || block.hold { return CaploNSColor.textLayer }
         if block.mask { return CaploNSColor.mask }
-        switch block.role { case .system, .microphone: return CaploNSColor.audio; case .camera: return CaploNSColor.warning; case .screen: return accent; case nil: return CaploNSColor.zoom }
+        switch block.role { case .system, .microphone, .music: return CaploNSColor.audio; case .camera: return CaploNSColor.warning; case .screen: return accent; case nil: return CaploNSColor.zoom }
     }
     /// 轨道类别图标：实心、圆润的符号，轨头里再垫一块类别色的圆角小徽章，与块的颜色对应。
     private func symbol(for block: Block) -> String {
@@ -664,7 +779,7 @@ final class TimelineViewportView: NSView {
         if block.hold { return "pause.rectangle.fill" }
         if block.text { return "text.alignleft" }
         if block.mask { return "rectangle.dashed" }
-        switch block.role { case .system: return "speaker.wave.2.fill"; case .microphone: return "mic.fill"; case .camera: return "video.fill"; case .screen: return "play.rectangle.fill"; case nil: return "scope" }
+        switch block.role { case .system: return "speaker.wave.2.fill"; case .microphone: return "mic.fill"; case .music: return "music.note"; case .camera: return "video.fill"; case .screen: return "play.rectangle.fill"; case nil: return "scope" }
     }
     /// 配好色的类别图标。每帧为几百个块各造一次 NSImage（符号查找 + 配置 + 光栅化）是时间线最贵的一笔；
     /// 符号名、字号、颜色都只有屈指可数的几种，缓存之后这一项基本归零。
@@ -751,7 +866,14 @@ final class TimelineViewportView: NSView {
         skimmerTime.contentsScale = 2
         skimmerPlate.cornerRadius = 3
         for overlay in [skimmer, skimmerHandle, skimmerPlate, skimmerTime] { overlay.isHidden = true; layer?.addSublayer(overlay) }
-        dragGhost.isHidden = true; dragGhost.zPosition = 20; dragGhost.cornerRadius = 6
+        hoverContainer.masksToBounds = true
+        hoverGlow.fillColor = NSColor.white.withAlphaComponent(0.08).cgColor
+        hoverHandles.fillColor = CaploNSColor.accent.withAlphaComponent(0.9).cgColor
+        hoverGlow.opacity = 0; hoverHandles.opacity = 0
+        hoverContainer.addSublayer(hoverGlow); hoverContainer.addSublayer(hoverHandles)
+        // 垫在播放头与悬停指示线下面。
+        layer?.insertSublayer(hoverContainer, at: 0)
+        dragGhost.isHidden = true; dragGhost.zPosition = 20; dragGhost.cornerRadius = Self.blockRadius
         dragGhost.borderWidth = 1.5; dragGhost.shadowColor = NSColor.black.cgColor
         dragGhost.shadowOpacity = 0.28; dragGhost.shadowRadius = 14; dragGhost.shadowOffset = CGSize(width: 0, height: 8)
         dragGhostTitle.font = NSFont.systemFont(ofSize: 11, weight: .semibold)
@@ -773,7 +895,7 @@ final class TimelineViewportView: NSView {
             dragGhostTitle.frame = CGRect(x: 10, y: 8, width: width - 20, height: 16)
             dragGhostTitle.string = block.title
             updateGhostColors()
-            dragGhost.shadowPath = CGPath(roundedRect: dragGhost.bounds, cornerWidth: 6, cornerHeight: 6, transform: nil)
+            dragGhost.shadowPath = CGPath(roundedRect: dragGhost.bounds, cornerWidth: Self.blockRadius, cornerHeight: Self.blockRadius, transform: nil)
             let reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
             var transform = reduceMotion ? CATransform3DIdentity : CATransform3DMakeScale(1.025, 1.025, 1)
             if !reduceMotion { transform = CATransform3DRotate(transform, -0.012, 0, 0, 1) }
@@ -848,13 +970,14 @@ final class TimelineViewportView: NSView {
     override func mouseMoved(with event: NSEvent) {
         guard drag == nil, scrollDrag == nil else { return }
         let point = convert(event.locationInWindow, from: nil)
+        updateHoveredBlock(at: point)
         if point.x >= timeOrigin, point.x < bounds.width - 8, point.y >= 0, point.y < trackArea.maxY, !model.playing {
             hoveredPoint = point; model.skim(min(edit.duration, TimelineTime.quantized(time(point.x))))
         } else { hoveredPoint = nil; model.skim(nil) }
         updateSkimmer()
     }
     override func mouseExited(with event: NSEvent) {
-        hoveredPoint = nil; model.skim(nil); updateSkimmer()
+        hoveredPoint = nil; model.skim(nil); updateSkimmer(); updateHoveredBlock(at: nil)
     }
     /// 鼠标静止时横滚或缩放，也要以屏幕上的悬停点重新映射预览时间。
     private func refreshHoveredPreview() {
@@ -890,15 +1013,15 @@ final class TimelineViewportView: NSView {
             skimmerHandle.position = CGPoint(x: point, y: 0)
             let code = TimelineTime.code(position)
             skimmerTime.string = code
-            let plate = CaploNSColor.surfaceOpaqueRaised.withAlphaComponent(EditorMaterialDrawing.usesOpaqueSurface(appearance: effectiveAppearance, opaqueOverride: materialOpaqueOverride) ? 1 : 0.88)
-            skimmerPlate.backgroundColor = resolvedColor(plate); skimmerTime.foregroundColor = resolvedColor(CaploNSColor.textPrimary)
+            // 底板不透明、与刻度标签同一行：压到的那个刻度字整个盖住，不再两行字叠在一起（2026-10-13 用户截图）。
+            skimmerPlate.backgroundColor = resolvedColor(CaploNSColor.surfaceOpaqueRaised); skimmerTime.foregroundColor = resolvedColor(CaploNSColor.textPrimary)
             // 底板贴着文字：左右各 6 点留白、高 16；文字层高度取字体行高并在底板里垂直居中，避免 CATextLayer 顶对齐带来的下坠。
             let textWidth = ceil((code as NSString).size(withAttributes: [.font: skimmerFont]).width)
             let lineHeight = ceil(skimmerFont.ascender - skimmerFont.descender)
             let plateWidth = textWidth + 12, plateHeight: CGFloat = 16
             let plateX = min(bounds.width - plateWidth - 8, max(timeOrigin, point + 8))
-            skimmerPlate.frame = CGRect(x: plateX, y: 7, width: plateWidth, height: plateHeight)
-            skimmerTime.frame = CGRect(x: plateX + 6, y: 7 + (plateHeight - lineHeight) / 2, width: textWidth, height: lineHeight)
+            skimmerPlate.frame = CGRect(x: plateX, y: 0.5, width: plateWidth, height: plateHeight)
+            skimmerTime.frame = CGRect(x: plateX + 6, y: 0.5 + (plateHeight - lineHeight) / 2, width: textWidth, height: lineHeight)
         }
         CATransaction.commit()
     }
@@ -946,33 +1069,28 @@ final class TimelineViewportView: NSView {
                 }
                 // 极端缩放时最小外观可能相交；选中块置顶，并提供右键同行列表保证每个块都可访问。
                 let drawing = painted.sorted { !isSelected($0) && isSelected($1) }
-                // 底色与描边按类别攒成一条路径一次画完：一帧几百个块的话，
+                // 底色按类别攒成一条路径一次画完：一帧几百个块的话，
                 // 逐块 new NSBezierPath 再 fill 一次，光是对象分配就占掉三成绘制时间。
+                // 块是实色、无描边的圆角片（2026-10-13 参照 hyperframes：原来 25% 透明底加细亮边，看着像一个个空框）。
                 var fillOrder: [NSColor] = []
                 var fills: [NSColor: NSBezierPath] = [:]
-                let edges = NSBezierPath()
                 for block in drawing where !isFloating(block.id) {
-                    let rect = blockRect(block, row: number)
+                    let rect = paintRect(block, row: number)
                     guard rect.maxX > timeOrigin, rect.minX < bounds.width else { continue }
                     let tint = color(for: block)
                     if fills[tint] == nil { fills[tint] = NSBezierPath(); fillOrder.append(tint) }
-                    fills[tint]?.appendRoundedRect(rect, xRadius: 5, yRadius: 5)
-                    edges.appendRoundedRect(rect.insetBy(dx: 0.5, dy: 0.5), xRadius: 4.5, yRadius: 4.5)
+                    fills[tint]?.appendRoundedRect(rect, xRadius: Self.blockRadius, yRadius: Self.blockRadius)
                 }
                 for tint in fillOrder {
-                    tint.withAlphaComponent(0.25).setFill(); fills[tint]?.fill()
-                }
-                if !edges.isEmpty {
-                    // 类别色仍是主要识别线索；细亮边只提供玻璃卡片的层次，不影响块的命中范围。
-                    CaploNSColor.glassEdge.setStroke(); edges.lineWidth = CaploMetrics.hairline; edges.stroke()
+                    Self.blockFill(tint).setFill(); fills[tint]?.fill()
                 }
                 for block in drawing {
                     if isFloating(block.id) {
-                        let placeholder = blockRect(block, row: number)
+                        let placeholder = paintRect(block, row: number)
                         color(for: block).withAlphaComponent(0.08).setFill()
-                        NSBezierPath(roundedRect: placeholder, xRadius: 6, yRadius: 6).fill()
+                        NSBezierPath(roundedRect: placeholder, xRadius: Self.blockRadius, yRadius: Self.blockRadius).fill()
                         color(for: block).withAlphaComponent(0.35).setStroke()
-                        let outline = NSBezierPath(roundedRect: placeholder.insetBy(dx: 1, dy: 1), xRadius: 5, yRadius: 5)
+                        let outline = NSBezierPath(roundedRect: placeholder.insetBy(dx: 1, dy: 1), xRadius: Self.blockRadius - 1, yRadius: Self.blockRadius - 1)
                         outline.setLineDash([4, 4], count: 2, phase: 0); outline.stroke()
                     } else { drawBlock(block, row: number) }
                     if block.role == .screen { visibleClipDrawCount += 1 }
@@ -989,7 +1107,7 @@ final class TimelineViewportView: NSView {
         NSGraphicsContext.restoreGraphicsState()
         CaploNSColor.separator.setFill(); CGRect(x: headerWidth - 1, y: 0, width: 1, height: bounds.height).fill()
         NSGraphicsContext.saveGraphicsState()
-        NSBezierPath(rect: CGRect(x: timeOrigin, y: 0, width: contentWidth, height: 28)).addClip()
+        NSBezierPath(rect: CGRect(x: timeOrigin, y: 0, width: contentWidth, height: Self.rulerHeight)).addClip()
         drawRuler()
         NSGraphicsContext.restoreGraphicsState()
         if let snappedTime, x(snappedTime) >= timeOrigin, x(snappedTime) < bounds.width - 8 {
@@ -1013,7 +1131,6 @@ final class TimelineViewportView: NSView {
                                                               width: rect.width, height: rowHeight))
             result.append(element)
         }
-        result.append(navigator)
         return result
     }
     private func label(_ text: String, in rect: CGRect, color: NSColor, size: Double = 10, bold: Bool = false) {
@@ -1021,19 +1138,35 @@ final class TimelineViewportView: NSView {
         TimelineTextRenderer.draw(text, in: rect, color: color, size: size, bold: bold,
                                   appearance: effectiveAppearance, context: context, flipped: isFlipped)
     }
+    /// 标尺：主刻度按 1-2-5 取整（一秒以内按整帧），相邻两个至少隔 88 点；标签随缩放变短。
+    /// 原来每个主刻度都写完整的 00:00:00:00，又长又密，还会和悬停时间牌叠在一起（2026-10-13 参照 hyperframes 调整）。
     private func drawRuler() {
-        let steps = [1.0 / 30, 1.0 / 15, 1.0 / 6, 0.5, 1, 2, 5, 10, 30, 60, 120, 300, 600, 1800, 3600, 7200, 14_400, 86_400]
-        let major = steps.first { $0 * scale >= 100 } ?? max(86_400, contentWidth / scale / 5)
-        let minor = max(1.0 / 30, major / 5)
+        // （主刻度间隔，细分份数）：每一小格都落在整帧或整秒上。
+        let steps: [(Double, Int)] = [(1.0 / 30, 1), (2.0 / 30, 2), (5.0 / 30, 5), (0.5, 5), (1, 5), (2, 4), (5, 5), (10, 5), (15, 3), (30, 3),
+                                      (60, 4), (120, 4), (300, 5), (600, 5), (900, 3), (1800, 3), (3600, 4), (7200, 4), (14_400, 4), (86_400, 4)]
+        let (major, parts) = steps.first { $0.0 * scale >= 88 } ?? (max(86_400, contentWidth / scale / 5), 1)
+        let minor = major / Double(parts)
         // 刻度只画到时间线尽头；内容比视口短时右侧留空，不再标出不存在的时间。
         let first = floor(offset / minor), last = ceil(min(visibleRange.upperBound, timelineExtent) / minor)
         guard last >= first else { return }
         for step in Int(first)...Int(last) {
             let value = Double(step) * minor
-            let isMajor = abs(value / major - (value / major).rounded()) < 0.001
+            let isMajor = step % parts == 0
             CaploNSColor.separator.setFill(); CGRect(x: x(value), y: isMajor ? 16 : 21, width: 1, height: isMajor ? 10 : 5).fill()
-            if isMajor { label(TimelineTime.code(value), in: CGRect(x: x(value) + 4, y: 1, width: 96, height: 14), color: CaploNSColor.textSecondary, size: 9) }
+            guard isMajor else { continue }
+            let text = Self.rulerLabel(value)
+            // 帧号是整秒之间的补充，比整秒标签淡一档。
+            label(text, in: CGRect(x: x(value) + 4, y: 1, width: 96, height: 14), color: text.hasSuffix("f") ? CaploNSColor.textTertiary : CaploNSColor.textSecondary, size: 9)
         }
+    }
+    /// 刻度标签：整秒写"分:秒"（满一小时带上小时），落在一秒以内的只写帧号，例如 `00:05`、`15f`。
+    static func rulerLabel(_ time: Double) -> String {
+        let frames = Int(TimelineTime.framesPerSecond)
+        let frame = Int((min(1e9, max(0, time.isFinite ? time : 0)) * TimelineTime.framesPerSecond).rounded())
+        let seconds = frame / frames, rest = frame % frames
+        if rest != 0 { return "\(rest)f" }
+        if seconds >= 3600 { return String(format: "%d:%02d:%02d", seconds / 3600, seconds / 60 % 60, seconds % 60) }
+        return String(format: "%02d:%02d", seconds / 60, seconds % 60)
     }
     private func isSelected(_ block: Block) -> Bool {
         if block.keys { return model.selectedKeys == block.id }
@@ -1069,7 +1202,7 @@ final class TimelineViewportView: NSView {
     }
     /// 底色与描边已经在行里按类别攒成一条路径画过了（见 drawTimelineContents），这里只画块里的内容。
     private func drawBlock(_ block: Block, row: Int) {
-        let rect = blockRect(block, row: row)
+        let rect = paintRect(block, row: row)
         guard rect.maxX > timeOrigin, rect.minX < bounds.width else { return }
         if block.keys { drawKeyCaps(block, in: rect); return }
         let color = color(for: block)
@@ -1083,9 +1216,12 @@ final class TimelineViewportView: NSView {
             ? [TimelineMedia.system, .microphone].filter { edit.audioFollowsPicture($0) && model.audioTracks.contains($0 == .system ? .system : .microphone) } : []
         let waveRoles: [TimelineMedia] = block.role == .system || block.role == .microphone ? [block.role!] : followRoles
         let embedded = block.role == .screen
-        if !waveRoles.isEmpty, let clip = edit.mediaClips(waveRoles[0]).first(where: { $0.id == block.id }) ?? edit.clips.first(where: { $0.id == block.id }) {
+        // 音乐块的波形来自它自己的文件（相对文件起点），循环的块过了文件结尾从头再画。
+        let musicClip = block.role == .music ? edit.mediaClips(.music).first(where: { $0.id == block.id }) : nil
+        let musicWave = musicClip?.music.flatMap { model.musicPeaks[$0.file] }
+        if let clip = musicClip ?? (waveRoles.isEmpty ? nil : edit.mediaClips(waveRoles[0]).first(where: { $0.id == block.id }) ?? edit.clips.first(where: { $0.id == block.id })) {
             let samples = waveRoles.contains(.system) && !analysis.system.isEmpty ? analysis.system : analysis.microphone
-            if !samples.isEmpty {
+            if musicClip == nil ? !samples.isEmpty : musicWave?.isEmpty == false {
                 // 上下对称的填充包络，以整块的垂直中线为轴（标题叠在上面，带一层阴影保证读得清）。
                 // 以前画在标题带下面那一截里，标题带没有底色，看上去整条波形偏下（2026-10-06 用户指出）。
                 // 每 1 点取这一点覆盖时间段的峰值（金字塔查询，缩得再小也不漏短促的声音）。
@@ -1099,7 +1235,14 @@ final class TimelineViewportView: NSView {
                 for pixel in stride(from: left, through: max(left, right), by: 1.0) {
                     let begin = time(pixel) - block.start, finish = time(pixel + 1) - block.start
                     var level = 0.0
-                    if finish > 0, begin < clip.playableDuration {
+                    if let music = clip.music, let musicWave {
+                        if finish > 0, begin < clip.duration, music.length > 0 {
+                            // 一个像素跨过文件结尾（循环的接缝）时只取前半截，不把开头的峰值算进来。
+                            let start = (clip.sourceStart + max(0, begin)).truncatingRemainder(dividingBy: music.length)
+                            let end = min(music.length, start + max(0.001, min(clip.duration, finish) - max(0, begin)))
+                            level = Self.waveformLevel(musicWave.peak(from: start, to: end))
+                        }
+                    } else if finish > 0, begin < clip.playableDuration {
                         let start = clip.sourceStart + max(0, begin), end = clip.sourceStart + min(clip.playableDuration, finish)
                         let peak = waveRoles.map { $0 == .system ? analysis.systemPeak(from: start, to: end) : analysis.microphonePeak(from: start, to: end) }.max() ?? 0
                         level = Self.waveformLevel(peak)
@@ -1145,14 +1288,7 @@ final class TimelineViewportView: NSView {
         }
         if isSelected(block) {
             // 选中描边画在块内部：外扩的描边在块贴着轨道左缘时会被裁掉一截。
-            accent.setStroke(); let border = NSBezierPath(roundedRect: rect.insetBy(dx: 0.75, dy: 0.75), xRadius: 4.5, yRadius: 4.5); border.lineWidth = 1.5; border.stroke()
-            // 两端把手：2 点宽、12 点高的小胶囊，在块里垂直居中，圆角与块本身呼应。
-            // 原来几乎撑满块高（36 点的块里 22 点），显得粗重（2026-10-07 用户指出）。
-            accent.setFill()
-            let handle = min(12, max(4, rect.height - 14))
-            for point in [rect.minX + 3, rect.maxX - 5] {
-                NSBezierPath(roundedRect: CGRect(x: point, y: rect.midY - handle / 2, width: 2, height: handle), xRadius: 1, yRadius: 1).fill()
-            }
+            accent.setStroke(); let border = NSBezierPath(roundedRect: rect.insetBy(dx: 0.75, dy: 0.75), xRadius: Self.blockRadius - 0.75, yRadius: Self.blockRadius - 0.75); border.lineWidth = 1.5; border.stroke()
         }
     }
     /// 按键块的内容：一排小键帽，和成片上显示的样子对应；放不下的收成"+N"。
@@ -1187,7 +1323,7 @@ final class TimelineViewportView: NSView {
             if x + width <= right { label(more, in: CGRect(x: x + 1, y: rect.midY - 5.5, width: width, height: 11), color: CaploNSColor.textSecondary, size: 9, bold: true) }
         }
         if isSelected(block) {
-            accent.setStroke(); let border = NSBezierPath(roundedRect: rect.insetBy(dx: 0.75, dy: 0.75), xRadius: 4.5, yRadius: 4.5); border.lineWidth = 1.5; border.stroke()
+            accent.setStroke(); let border = NSBezierPath(roundedRect: rect.insetBy(dx: 0.75, dy: 0.75), xRadius: Self.blockRadius - 0.75, yRadius: Self.blockRadius - 0.75); border.lineWidth = 1.5; border.stroke()
         }
     }
     override func mouseDown(with event: NSEvent) {
@@ -1195,14 +1331,15 @@ final class TimelineViewportView: NSView {
         guard model.ready else { return }
         let point = convert(event.locationInWindow, from: nil)
         model.skim(nil); hoveredPoint = nil; updateSkimmer()
+        updateHoveredBlock(at: point)
         if beginScrollbarInteraction(at: point) { return }
         snappedTime = nil
-        if point.y < 28, point.x >= timeOrigin {
+        if point.y < tracksTop, point.x >= timeOrigin {
             drag = Drag(kind: .scrub, origin: point, snapshot: edit, timeline: index, scale: scale, offset: offset, rowIDs: rows.map { $0.map(\.id) }, snapEdges: [])
             seek(time(point.x), modifiers: event.modifierFlags); return
         }
         guard trackArea.contains(point) else { return }
-        let number = Int((point.y - 28 + verticalOffset) / rowHeight)
+        let number = Int((point.y - tracksTop + verticalOffset) / rowHeight)
         if point.x >= headerWidth, point.x < timeOrigin { return }
         // 所有行下方的空白：按下只定位并取消选中；新建聚焦只走右键菜单。
         guard rows.indices.contains(number), let first = rows[number].first else {
@@ -1270,7 +1407,7 @@ final class TimelineViewportView: NSView {
     /// 行内空白处右键：叠加层行（聚焦 / 遮罩 / 文字）给"在此处添加"，有重叠块时再给"同行块"。
     override func menu(for event: NSEvent) -> NSMenu? {
         let point = convert(event.locationInWindow, from: nil)
-        let number = Int((point.y - 28 + verticalOffset) / rowHeight)
+        let number = Int((point.y - tracksTop + verticalOffset) / rowHeight)
         guard trackArea.contains(point), rows.indices.contains(number) else { return nil }
         let siblings = rows[number].sorted { $0.start < $1.start }
         let clicked = TimelineTime.quantized(time(point.x))
@@ -1484,7 +1621,11 @@ final class TimelineViewportView: NSView {
             if block.caption { next.dragCaption(id: block.id, edge: edge, delta: adjustment, sourceDuration: model.entry.document.duration) }
             else if block.text { next.dragText(id: block.id, edge: edge, delta: adjustment, sourceDuration: model.entry.document.duration) }
             else if block.mask { next.dragMask(id: block.id, edge: edge, delta: adjustment, sourceDuration: model.entry.document.duration) }
-            else if let role = block.role { next.dragMedia(role, id: block.id, edge: edge, delta: adjustment, sourceDuration: model.entry.document.duration) }
+            else if let role = block.role {
+                // 素材块只在自己那份素材的范围里伸缩：导入的视频与录制首尾相连排在同一条源时间上，拖边不能拖进隔壁。
+                let bounds = drag.snapshot.mediaClips(role).first(where: { $0.id == block.id }).map { model.sourceBounds(of: $0) } ?? 0..<model.entry.document.duration
+                next.dragMedia(role, id: block.id, edge: edge, delta: adjustment, sourceDuration: bounds.upperBound, sourceFloor: bounds.lowerBound)
+            }
             else if let span = block.span { next.materializeFocus(span); next.dragFocus(id: block.id, edge: edge, delta: adjustment) }
             next.constrainTimelineFocuses()
             if edge == .body {
@@ -1492,6 +1633,7 @@ final class TimelineViewportView: NSView {
                 updateDragGhost(at: CGPoint(x: drag.origin.x + displacement.x, y: drag.origin.y + displacement.y))
             } else { dropTarget = nil }
             if model.edit != next { model.edit = next; model.previewChanged(edgeSource: edgePreviewSource(of: block, edge: edge, in: next), edgeClip: block.id) }
+            updateHoverLayers()
             needsDisplay = true
         }
     }
@@ -1506,7 +1648,7 @@ final class TimelineViewportView: NSView {
     }
     private func remainsInOriginalRow(_ drag: Drag, at point: CGPoint) -> Bool {
         guard let id = drag.blockID else { return false }
-        let position = (point.y - 28 + verticalOffset) / rowHeight
+        let position = (point.y - tracksTop + verticalOffset) / rowHeight
         let number = Int(floor(position)), fraction = position - floor(position)
         guard drag.rowIDs.indices.contains(number), drag.rowIDs[number].contains(id) else { return false }
         // 水平拖动即使从块上缘抓起也不自动拆行；明确竖向拖向行间才脱离。
@@ -1514,7 +1656,7 @@ final class TimelineViewportView: NSView {
     }
     private func updateDropTarget(at point: CGPoint, proposed: VideoEdit) {
         guard let drag, let id = drag.blockID else { return }
-        let rowPosition = (point.y - 28 + verticalOffset) / rowHeight
+        let rowPosition = (point.y - tracksTop + verticalOffset) / rowHeight
         let number = Int(floor(rowPosition)), fraction = rowPosition - floor(rowPosition)
         let reorder: Bool
         if case .reorder = drag.kind { reorder = true } else { reorder = false }
@@ -1569,9 +1711,10 @@ final class TimelineViewportView: NSView {
         // 松手也保留当前可见起点，避免轨道刚完成裁剪便整片跳动。
         retainedExtent = max(0, offset + contentWidth / scale)
         changedViewport()
+        onFittingHeightChange?()
     }
     override func resetCursorRects() {
-        addCursorRect(CGRect(x: 0, y: 28, width: headerWidth, height: max(0, trackArea.height)), cursor: .openHand)
+        addCursorRect(CGRect(x: 0, y: tracksTop, width: headerWidth, height: max(0, trackArea.height)), cursor: .openHand)
         let first = max(0, Int(verticalOffset / rowHeight)), last = min(rows.count, Int((verticalOffset + trackArea.height) / rowHeight) + 1)
         if first < last {
             for row in first..<last {
@@ -1583,7 +1726,7 @@ final class TimelineViewportView: NSView {
                     if rect.maxX < lastEdge + 2 { continue }
                     lastEdge = max(lastEdge, rect.maxX)
                     for x in [rect.minX - 4, rect.maxX - 8] {
-                        let handle = CGRect(x: x, y: rect.minY - 3, width: 12, height: rect.height + 6).intersection(CGRect(x: timeOrigin, y: 28, width: contentWidth, height: trackArea.height))
+                        let handle = CGRect(x: x, y: rect.minY - 3, width: 12, height: rect.height + 6).intersection(CGRect(x: timeOrigin, y: tracksTop, width: contentWidth, height: trackArea.height))
                         if !handle.isNull { addCursorRect(handle, cursor: .resizeLeftRight) }
                     }
                 }
@@ -1591,7 +1734,8 @@ final class TimelineViewportView: NSView {
         }
     }
     override func mouseUp(with event: NSEvent) {
-        if scrollDrag != nil { scrollDrag = nil; needsDisplay = true; return }
+        pointerLocation = convert(event.locationInWindow, from: nil)
+        if scrollDrag != nil { scrollDrag = nil; changedViewport(); return }
         guard let initial = drag else { return }
         if initial.moved { updateDrag(at: convert(event.locationInWindow, from: nil), modifiers: event.modifierFlags) }
         if case .invalid = dropTarget { model.cancelInteraction(); clearDrag(); return }
@@ -1639,7 +1783,16 @@ final class TimelineViewportView: NSView {
         case 119: model.seek(edit.duration)
         case 51, 117: model.deleteSelection()
         case 53: model.cancelInteraction(); clearDrag()
-        default: super.keyDown(with: event)
+        default:
+            // + / = 放大、− 缩小（原来是底部总览条的按键，总览条去掉后留在时间线上）。
+            // 以播放头为锚点；播放头不在视口里就以视口中点为锚点。
+            let playheadX = x(playbackPosition)
+            let anchorX = playheadX >= timeOrigin && playheadX <= timeOrigin + contentWidth ? playheadX : timeOrigin + contentWidth / 2
+            switch event.charactersIgnoringModifiers {
+            case "+", "=": setZoom(viewport.zoom + 0.32, anchorX: anchorX)
+            case "-": setZoom(viewport.zoom - 0.32, anchorX: anchorX)
+            default: super.keyDown(with: event)
+            }
         }
     }
 }

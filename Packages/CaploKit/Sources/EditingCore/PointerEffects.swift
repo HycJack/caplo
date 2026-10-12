@@ -36,6 +36,14 @@ public struct PointerEffects: Codable, Equatable, Sendable {
         value.style = .tahoe; value.smoothing = 0.5; value.bounce = 0.2; value.motionBlur = 0.15
         return value
     }
+    /// 原样的光标：不换样式、不平滑、不回弹、不画点击高亮，大小与录制时的系统光标一致。
+    /// "设置 → 录制 → 新录制的默认效果"里关掉光标效果时，新录制从这里开始。
+    public static func plain(systemScale: Double?) -> PointerEffects {
+        var value = PointerEffects()
+        value.clicksVisible = false
+        value.cursorScale = min(1, max(minimumCursorScale, systemScale ?? 0.5))
+        return value
+    }
     /// `cursorVisible` 存在新键 `showsCursor` 下：旧键 `cursorVisible` 是 2026-09-08 去掉的"显示光标"开关留下的，
     /// 那之前存过的 false 早已作废（去掉开关时统一恢复显示），不能因为开关回来又把老工程的光标藏起来。
     private enum CodingKeys: String, CodingKey { case cursorVisible = "showsCursor", cursorScale, clicksVisible, clickScale, tint, customTint, style, smoothing, bounce, bounceSpeed, sway, motionBlur, hideIdle, loop, clickEffect, angle, directionFollow, cursorStyle }

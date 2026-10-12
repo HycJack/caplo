@@ -36,9 +36,12 @@ struct EditorWorkspace: NSViewRepresentable {
 final class EditorWorkspaceView: NSSplitView, NSSplitViewDelegate {
     static let dividerSize: CGFloat = CaploMetrics.Spacing.s
     static let minimumCanvasHeight: CGFloat = 220
+    /// 用户能把时间线拖到的最矮高度；轨道很少时"刚好摆下"的高度可以比它更矮。
     static let minimumTimelineHeight: CGFloat = 180
     static let defaultTimelineHeight: CGFloat = 294
-    static let heightKey = "editor.timelineHeight"
+    /// 用户亲手拖出来的时间线高度；没有这一项就是"自动"——按轨道数刚好摆下。
+    /// 旧的 `editor.timelineHeight` 记的是另一回事（自动收放之前的固定高度），不再读：沿用它会让只有一两条轨的工程又变回半屏空地。
+    static let heightKey = "editor.timelineManualHeight"
 
     private let model: VideoEditorModel
     let viewport: TimelineViewport
@@ -54,8 +57,9 @@ final class EditorWorkspaceView: NSSplitView, NSSplitViewDelegate {
     let timelinePane: TimelinePaneView
     private var detached = false
     private var appliedStoredHeight = false
+    /// 正在拖分界：这期间高度听鼠标的，不往"刚好摆下"上收。
+    private var draggingDivider = false
     private var defaultsObserver: NSObjectProtocol?
-    private var persistWork: DispatchWorkItem?
 
     init(model: VideoEditorModel, viewport: TimelineViewport, addFocus: @escaping () -> Void) {
         self.model = model; self.viewport = viewport
@@ -99,6 +103,7 @@ final class EditorWorkspaceView: NSSplitView, NSSplitViewDelegate {
         setHoldingPriority(NSLayoutConstraint.Priority(rawValue: 250), forSubviewAt: 0)
         setHoldingPriority(NSLayoutConstraint.Priority(rawValue: 750), forSubviewAt: 1)
 
+        timelinePane.timeline.onFittingHeightChange = { [weak self] in self?.fitTimeline() }
         defaultsObserver = NotificationCenter.default.addObserver(forName: UserDefaults.didChangeNotification, object: UserDefaults.standard, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { self?.storedHeightChanged() }
         }
@@ -122,7 +127,6 @@ final class EditorWorkspaceView: NSSplitView, NSSplitViewDelegate {
         detached = true
         if let defaultsObserver { NotificationCenter.default.removeObserver(defaultsObserver) }
         defaultsObserver = nil
-        persistWork?.cancel()
         timelinePane.timeline.detach()
         if model.canvas.view === canvas { model.canvas.view = nil }
     }
@@ -133,7 +137,7 @@ final class EditorWorkspaceView: NSSplitView, NSSplitViewDelegate {
     private func observeModel() {
         guard !detached else { return }
         withObservationTracking {
-            timelinePane.timeline.update(edit: model.edit, analysis: model.analysis, selection: model.selectedClipIDs,
+            timelinePane.timeline.update(edit: model.edit, analysis: model.analysis, musicWaves: model.musicPeaks.count, selection: model.selectedClipIDs,
                                          primary: model.selectedClip, focus: model.selectedFocus, mask: model.selectedMask, text: model.selectedText, caption: model.selectedCaption,
                                          keys: model.keyTimeline, keyRun: model.selectedKeys,
                                          zoom: viewport.zoom, fit: viewport.fitRequest, heights: viewport.trackHeights,
@@ -163,13 +167,22 @@ final class EditorWorkspaceView: NSSplitView, NSSplitViewDelegate {
     }
 
     /// 分界拖动在 AppKit 的跟踪循环里完成：时间线按当前尺寸刷新可见行，松手后才记住高度。
+    /// 双击分界：忘掉拖出来的高度，回到按轨道数自动收放。
     override func mouseDown(with event: NSEvent) {
+        if event.clickCount == 2 {
+            UserDefaults.standard.removeObject(forKey: Self.heightKey)
+            fitTimeline(); return
+        }
+        let before = timelineHeight
         timelinePane.timeline.liveResizing = true
         viewport.liveResizing = true
+        draggingDivider = true
         super.mouseDown(with: event)
+        draggingDivider = false
         viewport.liveResizing = false
         timelinePane.timeline.liveResizing = false
-        persistHeight(now: true)
+        // 只是按了一下没拖动，不算数。
+        if abs(timelineHeight - before) > 0.5 { UserDefaults.standard.set(Double(timelineHeight), forKey: Self.heightKey) }
     }
 
     override func viewDidChangeEffectiveAppearance() {
@@ -180,56 +193,56 @@ final class EditorWorkspaceView: NSSplitView, NSSplitViewDelegate {
 
     override func layout() {
         super.layout()
-        if !appliedStoredHeight, bounds.height > 0 {
-            appliedStoredHeight = true
-            applyStoredHeight()
-        }
+        guard bounds.height > 0 else { return }
+        appliedStoredHeight = true
+        // 窗口变矮时时间线会被挤扁，再变高它不会自己长回来：每次布局都对一下。
+        fitTimeline()
     }
 
     var timelineHeight: CGFloat { timelinePane.frame.height }
 
-    private var clampedStoredHeight: CGFloat {
-        let stored = UserDefaults.standard.object(forKey: Self.heightKey) as? Double ?? Double(Self.defaultTimelineHeight)
-        let value = stored.isFinite ? CGFloat(stored) : Self.defaultTimelineHeight
-        let maximum = max(Self.minimumTimelineHeight, bounds.height - dividerThickness - Self.minimumCanvasHeight)
-        return min(maximum, max(Self.minimumTimelineHeight, value))
+    /// 用户拖出来的高度；nil 表示没拖过（或双击分界重置了），高度跟着轨道数走。
+    private var manualHeight: CGFloat? {
+        guard let stored = UserDefaults.standard.object(forKey: Self.heightKey) as? Double, stored.isFinite, stored > 0 else { return nil }
+        return CGFloat(stored)
+    }
+    /// 现有的轨道全部摆下所需的窗格高度。
+    private var contentHeight: CGFloat { timelinePane.fittingHeight }
+    /// 时间线最矮能到哪：一般是 `minimumTimelineHeight`，轨道少到连它都用不满时就是"刚好摆下"。
+    private var minimumHeight: CGFloat { min(Self.minimumTimelineHeight, contentHeight) }
+    /// 窗口里最多能给时间线多高（画布至少留 `minimumCanvasHeight`）。
+    private var availableHeight: CGFloat { max(minimumHeight, bounds.height - dividerThickness - Self.minimumCanvasHeight) }
+    /// 时间线该有的高度。拖过分界就按拖的来（比轨道高、比轨道矮都行，2026-10-13 用户要求能拖高）；
+    /// 没拖过则刚好摆下现有的轨道——只有一两条轨时不占着半个窗口，轨道多了自己长高，
+    /// 但自动长高不超过窗口的四成多一点，再多就在里面滚动，不把画布挤扁。
+    private var fittedHeight: CGFloat {
+        if let manualHeight { return min(availableHeight, max(minimumHeight, manualHeight)) }
+        let automaticLimit = max(Self.defaultTimelineHeight, (bounds.height - dividerThickness) * 0.42)
+        return min(availableHeight, min(contentHeight, automaticLimit))
     }
 
-    private func applyStoredHeight() {
-        guard bounds.height > 0 else { return }
-        setPosition(bounds.height - dividerThickness - clampedStoredHeight, ofDividerAt: 0)
+    /// 把分界摆到该在的位置。拖分界、拖时间线上的块期间不动，等松手再量。
+    private func fitTimeline() {
+        guard !detached, appliedStoredHeight, bounds.height > 0, !draggingDivider, !timelinePane.timeline.isDraggingBlocks,
+              abs(fittedHeight - timelineHeight) > 0.5 else { return }
+        setPosition(bounds.height - dividerThickness - fittedHeight, ofDividerAt: 0)
     }
 
-    /// 偏好被外部改写（设置页或测试）时同步分界；自己写入的值与当前一致，不会来回触发。
-    private func storedHeightChanged() {
-        guard !detached, bounds.height > 0, abs(clampedStoredHeight - timelineHeight) > 0.5 else { return }
-        applyStoredHeight()
-    }
-
-    private func persistHeight(now: Bool) {
-        persistWork?.cancel()
-        let height = Double(timelineHeight)
-        let work = DispatchWorkItem { UserDefaults.standard.set(height, forKey: Self.heightKey) }
-        persistWork = work
-        if now { work.perform() } else { DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: work) }
-    }
+    /// 偏好被外部改写（设置页或测试）时同步分界。
+    private func storedHeightChanged() { fitTimeline() }
 
     // MARK: NSSplitViewDelegate
 
+    /// 分界最高能拖到哪：画布至少留最小高度。
     func splitView(_ splitView: NSSplitView, constrainMinCoordinate proposedMinimumPosition: CGFloat, ofSubviewAt dividerIndex: Int) -> CGFloat {
         max(proposedMinimumPosition, Self.minimumCanvasHeight)
     }
 
     func splitView(_ splitView: NSSplitView, constrainMaxCoordinate proposedMaximumPosition: CGFloat, ofSubviewAt dividerIndex: Int) -> CGFloat {
-        min(proposedMaximumPosition, bounds.height - dividerThickness - Self.minimumTimelineHeight)
+        min(proposedMaximumPosition, bounds.height - dividerThickness - minimumHeight)
     }
 
     func splitView(_ splitView: NSSplitView, canCollapseSubview subview: NSView) -> Bool { false }
-
-    func splitViewDidResizeSubviews(_ notification: Notification) {
-        guard appliedStoredHeight else { return }
-        persistHeight(now: false)
-    }
 }
 
 /// 时间线窗格：顶部固定 44 点的 SwiftUI 工具栏、1 点分隔线、其余是原生视口。子视图在尺寸变化时同步摆放。
@@ -261,6 +274,9 @@ final class TimelinePaneView: NSView {
         place()
     }
     required init?(coder: NSCoder) { fatalError("不支持归档初始化") }
+
+    /// 工具栏、分隔线加上把现有轨道全部摆下的视口高度。
+    var fittingHeight: CGFloat { CaploMetrics.toolbarHeight + 1 + timeline.fittingHeight }
 
     func updateMaterialPreview(opaque: Bool?, contrast: ColorSchemeContrast) {
         timeline.materialOpaqueOverride = opaque

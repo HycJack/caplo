@@ -37,6 +37,10 @@ public struct CaploSettingsView: View {
     @AppStorage("recording.microphone") private var microphone = false
     @AppStorage("recording.systemAudio") private var systemAudio = false
     @AppStorage("recording.camera") private var camera = false
+    @AppStorage(NewRecordingDefaults.autoFocusKey) private var newRecordingAutoFocus = true
+    @AppStorage(NewRecordingDefaults.cursorEffectsKey) private var newRecordingCursorEffects = true
+    @AppStorage(NewRecordingDefaults.layoutPresetKey) private var newRecordingLayoutPreset = ""
+    @State private var layoutPresets = CanvasPresetStore.shared
     @AppStorage(ExportSettings.revealKey) private var revealAfterExport = true
     @AppStorage(ExportSettings.clipboardKey) private var copyAfterExport = false
     @State private var section: Section = .general
@@ -199,6 +203,27 @@ public struct CaploSettingsView: View {
     // MARK: 录制
 
     @ViewBuilder private var recording: some View {
+        // 新录制第一次打开编辑器时带上哪些效果。全关掉就是"录什么样、出什么样"。放在页首：这一页里影响成片最大的就是它。
+        SettingsGroup(String(localized: "新录制的默认效果"), footer: String(localized: "只影响之后的新录制；进编辑器后都可以再改。")) {
+            SettingsRow(String(localized: "自动聚焦"), caption: String(localized: "按点击自动推近。")) {
+                Toggle("自动聚焦", isOn: $newRecordingAutoFocus).toggleStyle(StudioToggleStyle(embedded: true))
+            }
+            SettingsRow(String(localized: "光标效果"), caption: newRecordingCursorEffects ? String(localized: "平滑、回弹与点击高亮。") : String(localized: "用录下来的原始光标。")) {
+                Toggle("光标效果", isOn: $newRecordingCursorEffects).toggleStyle(StudioToggleStyle(embedded: true))
+            }
+            SettingsRow(String(localized: "画面布局"), caption: layoutPresets.presets.isEmpty ? String(localized: "在布局面板保存预设后可选。") : nil) {
+                // 按名字找：预设被删掉后自然回到"默认"。
+                let selected = layoutPresets.presets.first { $0.name == newRecordingLayoutPreset }
+                let builtIn = SelectField.Section(items: [SelectField.Item(id: "default", title: String(localized: "默认"), checked: selected == nil) { newRecordingLayoutPreset = "" }])
+                let saved = SelectField.Section(items: layoutPresets.presets.map { preset in
+                    SelectField.Item(id: preset.id.uuidString, title: preset.name, checked: selected?.id == preset.id) { newRecordingLayoutPreset = preset.name }
+                })
+                SelectField(value: selected?.name ?? String(localized: "默认"), placeholder: String(localized: "默认"), accessibilityName: String(localized: "新录制的画面布局"),
+                            sections: layoutPresets.presets.isEmpty ? [builtIn] : [builtIn, saved])
+                .frame(width: 180)
+                .disabled(layoutPresets.presets.isEmpty)
+            }
+        }
         SettingsGroup(String(localized: "画面")) {
             SettingsRow(String(localized: "帧率"), caption: frameRate == 60 ? String(localized: "滚动与光标运动更顺滑，文件更大；预览与导出按同一帧率。") : String(localized: "更省空间，适合静态内容较多的演示。")) {
                 ChipGroup([30, 60], selection: $frameRate) { "\($0) fps" }

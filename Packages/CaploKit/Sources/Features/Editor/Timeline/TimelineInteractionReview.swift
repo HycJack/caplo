@@ -22,7 +22,7 @@ public enum TimelineInteractionReview {
         }
         let viewport = TimelineViewport(); viewport.zoom = 1; viewport.fitRequest = 1
         let view = TimelineViewportView(model: model, viewport: viewport)
-        let window = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 1180, height: 420), styleMask: [.borderless], backing: .buffered, defer: false)
+        let window = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 1180, height: 260), styleMask: [.borderless], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false; window.contentView = view; window.orderFront(nil)
         defer { view.detach(); window.contentView = nil; window.close() }
         func sync() {
@@ -39,7 +39,13 @@ public enum TimelineInteractionReview {
             sync(); CATransaction.flush()
             guard let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { throw ReviewError.notReady }
             view.cacheDisplay(in: view.bounds, to: bitmap)
-            guard let data = bitmap.representation(using: .png, properties: [:]) else { throw ReviewError.notReady }
+            // 视口本身是透明的（实际垫在编辑器的玻璃面板上）：评审图垫一层面板的深色，不然透明处在看图软件里是白的。
+            let flat = NSImage(size: view.bounds.size)
+            flat.lockFocus()
+            NSColor(srgbRed: 0.13, green: 0.13, blue: 0.14, alpha: 1).setFill(); view.bounds.fill()
+            bitmap.draw(in: view.bounds)
+            flat.unlockFocus()
+            guard let tiff = flat.tiffRepresentation, let data = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) else { throw ReviewError.notReady }
             try data.write(to: output.appendingPathComponent(name + ".png"))
         }
         model.seek(2); sync()
@@ -47,10 +53,11 @@ public enum TimelineInteractionReview {
             window.appearance = NSAppearance(named: appearance)
             try await Task.sleep(for: .milliseconds(60))
             sync()
-            try mouse(.mouseMoved, CGPoint(x: TimelineViewportView.timeOrigin + 5.5 * 120, y: 18))
+            // 指针停在第三行的块上：同时看得到悬停时间牌、块的提亮与两端把手。
+            try mouse(.mouseMoved, CGPoint(x: TimelineViewportView.timeOrigin + 5.5 * 120, y: TimelineViewportView.tracksTop + TimelineViewportView.rowHeight * 2.5))
             try await Task.sleep(for: .milliseconds(80))
             try save((sharedRows ? "timeline-shared-" : "timeline-skimmer-") + scheme)
-            try mouse(.leftMouseDown, CGPoint(x: 32, y: 48))
+            try mouse(.leftMouseDown, CGPoint(x: 32, y: TimelineViewportView.tracksTop + 20))
             try mouse(.leftMouseDragged, CGPoint(x: 160, y: 154))
             sync()
             try save("timeline-drag-" + scheme)

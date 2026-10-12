@@ -62,6 +62,16 @@ public struct TimelineAnalysis: Sendable {
         return try await withTaskCancellationHandler { try await worker.value } onCancel: { worker.cancel() }
     }
 
+    /// 一个音乐文件的波形（相对文件起点）；缓存与录制声音共用 `Cache/Peaks/`。
+    public static func musicPeaks(project: URL, file: String) async throws -> AudioPeaks {
+        let worker = Task.detached(priority: .utility) {
+            let cache = project.appendingPathComponent("Cache/Peaks", isDirectory: true)
+            try? FileManager.default.createDirectory(at: cache, withIntermediateDirectories: true)
+            return AudioPeaks(try await filePeaks(try ProjectStorage.mediaURL(file, in: project), cache: cache))
+        }
+        return try await withTaskCancellationHandler { try await worker.value } onCancel: { worker.cancel() }
+    }
+
     /// 文件级峰值放到工程时间轴上：整体平移 `base` 换算成的格数（四舍五入到最近一格，误差不超过 5 毫秒）。
     /// 不能逐格算 (base + i / 100) × 100 再向下取整：浮点误差会让整段错开一格。
     static func merge(_ peaks: [Float], into timeline: inout [Float], base: Double) {
@@ -207,4 +217,13 @@ public struct TimelineAnalysis: Sendable {
         }
         return peak
     }
+}
+
+/// 单个音频文件的峰值与金字塔：音乐块画波形用，时间相对文件起点。
+public struct AudioPeaks: Sendable {
+    private let levels: [[Float]]
+    public init(_ peaks: [Float]) { levels = TimelineAnalysis.levels(for: peaks) }
+    public var isEmpty: Bool { levels.isEmpty }
+    /// 文件时间 `start…end` 内的峰值（0…1）。
+    public func peak(from start: Double, to end: Double) -> Float { TimelineAnalysis.peak(in: levels, from: start, to: end) }
 }

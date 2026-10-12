@@ -161,7 +161,7 @@ final class ShortcutStore {
         else if let data = try? JSONEncoder().encode(stored) { defaults.set(data, forKey: Self.defaultsKey) }
     }
 
-    /// 系统与应用固定占用的组合：退出 / 关窗 / 隐藏 / 最小化 / 剪贴板，编辑器的 ⌘1–⌘9 切面板，导航条的 + − =。
+    /// 系统与应用固定占用的组合：退出 / 关窗 / 隐藏 / 最小化 / 剪贴板，编辑器的 ⌘1–⌘9 切面板，时间线缩放的 + − =。
     static func reservedReason(_ combo: KeyCombo, scope: ShortcutAction.Scope) -> String? {
         let commandOnly = combo.command && !combo.shift && !combo.option && !combo.control
         if commandOnly, ["q", "w", "h", "m", "c", "v", "x", "`"].contains(combo.key) { return String(localized: "\(combo.display) 是系统快捷键，不能占用") }
@@ -170,7 +170,7 @@ final class ShortcutStore {
             return String(localized: "⌘1 – ⌘9 固定用于编辑器切换面板")
         }
         if !combo.command, !combo.control, !combo.option, scope == .editor || scope == .global, ["+", "=", "-"].contains(combo.key) {
-            return String(localized: "\(combo.display) 固定用于缩放时间线导航条")
+            return String(localized: "\(combo.display) 固定用于缩放时间线")
         }
         return nil
     }

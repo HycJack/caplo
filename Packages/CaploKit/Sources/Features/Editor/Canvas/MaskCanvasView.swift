@@ -47,8 +47,7 @@ final class MaskCanvasView: NSView {
     }
     private var time: Double { model.skimPosition ?? model.position }
     private var sourceSize: CGSize {
-        let full = model.entry.document.capture?.pixelSize ?? CGSize(width: 1920, height: 1080)
-        return SceneRenderer.croppedSourceSize(full.width > 0 && full.height > 0 ? full : CGSize(width: 1920, height: 1080), layout: model.edit.layout)
+        SceneRenderer.croppedSourceSize(model.sourcePixelSize, layout: model.edit.layout)
     }
     /// 相机必须和画面完全同源：跟随镜头已预编译成运镜路径（renderEdit），
     /// 而且坐标已经换算到裁切区域（cropResolved）——少任何一步，

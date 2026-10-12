@@ -16,7 +16,7 @@ public enum MaterialReview {
         // 只注册隔离默认值，不改变用户的外观、设备和编辑器偏好。
         defaults.register(defaults: ["appearance": "system", "recording.microphone": true,
                                      "recording.systemAudio": true, "recording.camera": false,
-                                     "editor.timelineHeight": 290.0])
+                                     "editor.timelineManualHeight": 290.0])
         let probeOnly = ProcessInfo.processInfo.environment["CAPLO_MATERIAL_REVIEW_PROBE"] == "1"
         var records: [OutputRecord] = []
         let probeModes: [Mode] = probeOnly ? [.standard] : [.standard, .reducedTransparency, .highContrast]

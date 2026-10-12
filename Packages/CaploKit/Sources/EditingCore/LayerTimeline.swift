@@ -1,18 +1,18 @@
 import Foundation
 
 /// 每个媒体块独立定位；旧工程在第一次编辑时展开，保留原来的音画对应关系。
-public enum TimelineMedia: String, Sendable { case screen, camera, system, microphone }
+public enum TimelineMedia: String, Sendable { case screen, camera, system, microphone, music }
 
 extension VideoEdit {
     public func mediaClips(_ role: TimelineMedia) -> [VideoClip] {
         // 旧工程的声音轨没有独立列表时跟着画面片段走；卡片没有声音，不能被当成一段声音带过去。
-        switch role { case .screen: orderedScreenClips; case .camera: orderedCameraClips; case .system: systemClips ?? mediaOnlyClips; case .microphone: microphoneClips ?? mediaOnlyClips }
+        switch role { case .screen: orderedScreenClips; case .camera: orderedCameraClips; case .system: systemClips ?? mediaOnlyClips; case .microphone: microphoneClips ?? mediaOnlyClips; case .music: musicClips ?? [] }
     }
     /// 这条轨有没有自己单独的一份片段。声音轨默认没有（nil）：跟着画面片段走，切开、拖边、删除、插卡片都自动一致，
     /// 播放与导出按画面片段的可见段取声音（`resolvedMedia`）。只有用户"分离声音"之后才有自己的一份。
     /// 逐轨处理片段的地方（切开、平移、合并）一律先问它：对跟随画面的轨调 `setMediaClips` 会把它悄悄拆出来。
     public func ownsTrack(_ role: TimelineMedia) -> Bool {
-        switch role { case .screen: true; case .camera: cameraClips != nil; case .system: systemClips != nil; case .microphone: microphoneClips != nil }
+        switch role { case .screen, .music: true; case .camera: cameraClips != nil; case .system: systemClips != nil; case .microphone: microphoneClips != nil }
     }
     public func audioFollowsPicture(_ role: TimelineMedia) -> Bool { (role == .system || role == .microphone) && !ownsTrack(role) }
 
@@ -79,7 +79,11 @@ extension VideoEdit {
         clips.contains { $0.card != nil } ? clips.filter { $0.card == nil } : clips
     }
     public mutating func setMediaClips(_ role: TimelineMedia, _ values: [VideoClip]) {
-        switch role { case .screen: clips = values; case .camera: cameraClips = values; case .system: systemClips = values; case .microphone: microphoneClips = values }
+        switch role {
+        case .screen: clips = values; case .camera: cameraClips = values; case .system: systemClips = values; case .microphone: microphoneClips = values
+        // 没有音乐时回到 nil：和从没加过音乐的工程是同一份数据。
+        case .music: musicClips = values.isEmpty ? nil : values
+        }
         normalizeTimelineRows()
     }
     /// 给时间线上的块（任一媒体片段或镜头）起名；空白视为清除，恢复默认名称。
@@ -89,11 +93,11 @@ extension VideoEdit {
         if let index = focuses.firstIndex(where: { $0.id == id }) { focuses[index].title = value; return }
         if maskList.contains(where: { $0.id == id }) { updateMask(id: id) { $0.title = value }; return }
         if textList.contains(where: { $0.id == id }) { updateText(id: id) { $0.title = value }; return }
-        for role in [TimelineMedia.screen, .camera, .system, .microphone] {
+        for role in [TimelineMedia.screen, .camera, .system, .microphone, .music] {
             var values = role == .screen ? clips : mediaClips(role)
             guard let index = values.firstIndex(where: { $0.id == id }) else { continue }
             values[index].title = value
-            switch role { case .screen: clips = values; case .camera: cameraClips = values; case .system: systemClips = values; case .microphone: microphoneClips = values }
+            switch role { case .screen: clips = values; case .camera: cameraClips = values; case .system: systemClips = values; case .microphone: microphoneClips = values; case .music: musicClips = values }
             return
         }
     }
@@ -109,6 +113,8 @@ extension VideoEdit {
     public func differsVisually(from other: VideoEdit) -> Bool {
         var candidate = other
         candidate.audio = audio
+        // 音乐只有声音，和音量一样不算画面变化（它的块增删由 `hasSameMedia` 管）。
+        candidate.musicClips = musicClips
         return candidate != self
     }
     public func hasSameMedia(as other: VideoEdit) -> Bool {
@@ -123,10 +129,12 @@ extension VideoEdit {
             && (systemClips == nil) == (other.systemClips == nil) && Self.mediaShape(systemClips ?? []) == Self.mediaShape(other.systemClips ?? [])
             && (microphoneClips == nil) == (other.microphoneClips == nil) && Self.mediaShape(microphoneClips ?? []) == Self.mediaShape(other.microphoneClips ?? [])
             && duration == other.duration && audio.voiceProcessing == other.audio.voiceProcessing
+            && Self.musicShape(musicClips) == Self.musicShape(other.musicClips)
     }
     /// 所有片段的单块音量，按轨依次排开：变了就要换一份混音参数。
     public var gainSignature: [Float] {
         [clips, systemClips ?? [], microphoneClips ?? []].flatMap { $0.flatMap { [$0.systemGain, $0.microphoneGain] } }
+            + (musicClips ?? []).flatMap { [$0.music?.volume ?? 0, Float($0.music?.fadeIn ?? 0), Float($0.music?.fadeOut ?? 0)] }
     }
     /// 层序里属于素材块（画面、人像、两条声音）的那些 ID，保持原顺序；没有层序时为 nil。
     var mediaLayerOrder: [UUID]? {
@@ -146,8 +154,12 @@ extension VideoEdit {
         }
     }
     /// 只改变选中块的起止，不推挤相邻图层；左边缘受源起点限制，右边缘可进入末帧保持区。
-    public mutating func dragMedia(_ role: TimelineMedia, id: UUID, edge: FocusDragEdge, delta: Double, sourceDuration: Double) {
+    /// `sourceFloor…sourceDuration` 是这一块所属素材在源时间里的范围：工程里接了导入的视频之后，
+    /// 各段素材首尾相连排在同一条源时间上，拖边不能拖进隔壁那段素材里。只有一段素材时就是 0…总长。
+    public mutating func dragMedia(_ role: TimelineMedia, id: UUID, edge: FocusDragEdge, delta: Double, sourceDuration: Double, sourceFloor: Double = 0) {
         guard delta.isFinite else { return }
+        // 音乐块引用的是自己的文件，边界、循环都按那个文件算（见 `dragMusic`）。
+        if role == .music { dragMusic(id: id, edge: edge, delta: delta); return }
         materializeLayers()
         var values = role == .screen ? clips : mediaClips(role)
         guard let number = values.firstIndex(where: { $0.id == id }) else { return }
@@ -165,7 +177,7 @@ extension VideoEdit {
         switch edge {
         case .body: clip.timelineStart = max(0, start + delta)
         case .leading:
-            let change = min(clip.duration - minimum, max(-min(start, clip.sourceStart), delta))
+            let change = min(clip.duration - minimum, max(-min(start, max(0, clip.sourceStart - sourceFloor)), delta))
             clip.timelineStart = start + change; clip.sourceStart += min(change, clip.playableDuration - 0.00001)
             clip.duration -= change
             clip.mediaDuration = min(clip.duration, max(0.00001, sourceDuration - clip.sourceStart))
@@ -200,6 +212,11 @@ extension VideoEdit {
         tail.sourceStart += min(offset, clip.playableDuration - 0.00001)
         if clip.timelineStart != nil { tail.timelineStart = time }
         if clip.mediaDuration != nil { tail.mediaDuration = max(0.00001, clip.playableDuration - offset) }
+        if let music = clip.music {
+            // 循环播放的音乐切在第二遍里时，后半段从文件里对应的位置接着放；淡入留给前半段、淡出留给后半段。
+            if music.length > 0 { tail.sourceStart = (clip.sourceStart + offset).truncatingRemainder(dividingBy: music.length) }
+            tail.music?.fadeIn = 0; values[number].music?.fadeOut = 0
+        }
         values[number].duration = offset
         if clip.mediaDuration != nil { values[number].mediaDuration = min(offset, clip.playableDuration) }
         values.insert(tail, at: number + 1); setMediaClips(role, values)
@@ -267,6 +284,37 @@ extension VideoEdit {
             normalizeTimelineRows()
         }
         return tail.id
+    }
+
+    /// 把一段刚导入的视频接到成片末尾：画面轨上多一块，引用源时间里 `sourceStart` 起的 `duration` 秒。
+    /// 导入的视频没有指针数据，这一块不画光标（否则录制时最后一个光标位置会一直停在它上面）。
+    /// 自带声音时走系统声音轨：没录系统声音的工程从"空列表"回到跟随画面；已经分离过声音的工程在声音轨上补一块。
+    /// `title` 一般是原文件名：时间线上一眼分得出哪块是导入的。
+    @discardableResult public mutating func appendImportedClip(sourceStart: Double, duration length: Double, hasAudio: Bool, title: String? = nil) -> UUID {
+        materializeLayers()
+        var clip = VideoClip(sourceStart: sourceStart, duration: length)
+        clip.timelineStart = duration; clip.cursorHidden = true
+        clip.title = title.flatMap { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : $0 }
+        var added = [clip.id]
+        clips.append(clip)
+        if hasAudio {
+            if systemClips?.isEmpty == true { systemClips = nil }
+            else if systemClips != nil {
+                var audio = clip; audio.id = UUID(); audio.cursorHidden = false; audio.title = nil
+                systemClips?.append(audio); added.append(audio.id)
+            }
+        }
+        if var order = layerOrder {
+            // 层序里挨着已有的画面块（同类不重叠的块自动并成一行）；声音块追加在最后。
+            order.removeAll(where: added.contains)
+            let screens = Set(clips.map(\.id))
+            order.insert(clip.id, at: order.firstIndex(where: screens.contains) ?? 0)
+            order += added.dropFirst()
+            layerOrder = order
+        }
+        normalizeSchemaVersion(layered: true)
+        normalizeTimelineRows()
+        return clip.id
     }
 
     /// 将遮挡关系解析为不重叠的素材切片；播放和导出用同一结果，空白区间保留。
@@ -354,7 +402,7 @@ extension VideoEdit {
         normalizeTimelineRows()
     }
     public var orderedLayerIDs: [UUID] {
-        let all = textList.map(\.id) + maskList.map(\.id) + clips.map(\.id) + focuses.map(\.id) + (cameraClips ?? []).map(\.id) + (systemClips ?? []).map(\.id) + (microphoneClips ?? []).map(\.id)
+        let all = textList.map(\.id) + maskList.map(\.id) + clips.map(\.id) + focuses.map(\.id) + (cameraClips ?? []).map(\.id) + (systemClips ?? []).map(\.id) + (microphoneClips ?? []).map(\.id) + (musicClips ?? []).map(\.id)
         let valid = Set(all), saved = (layerOrder ?? []).filter { valid.contains($0) }, existing = Set(saved)
         return saved + all.filter { !existing.contains($0) }
     }
