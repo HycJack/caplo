@@ -3975,6 +3975,17 @@
         }
       }
     },
+    "已删除 %lld 次按键": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld keys removed"
+          }
+        }
+      }
+    },
     "已导入的图片预览": {
       "extractionState": "manual",
       "localizations": {

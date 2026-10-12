@@ -99,6 +99,20 @@ import RenderKit
         #expect(first.pointers.keys.frame(at: 0.05, timeline: first.timeline, style: sampled)?.groups == KeystrokeStyle.sampleGroups)
         #expect(first.pointers.keys.frame(at: 0.3, timeline: first.timeline, style: sampled)?.groups == [["⌘", "C"]])
         #expect(try JSONDecoder().decode(KeystrokeStyle.self, from: JSONEncoder().encode(sampled)).sample == false)
+        // 按键轨：成片上连着显示的一组按键是一块，剪掉的那段里的不算；后面紧跟着别的按键就提前收住，片段结束也收住。
+        let keys = first.pointers.keys
+        let runs = keys.runs(timeline: first.timeline, style: nil)
+        #expect(runs.map(\.title) == ["⌘ C"])
+        #expect(abs((runs.first?.start ?? 0) - 0.2) < 0.001 && abs((runs.first?.duration ?? 0) - 1.3) < 0.001)
+        let whole = keys.runs(timeline: TimelineIndex(clips: [VideoClip(sourceStart: 0, duration: 2)]), style: nil)
+        #expect(whole.map(\.title) == ["A", "⌘ C"] && abs((whole.first?.duration ?? 0) - 0.25) < 0.001)
+        #expect(whole.last?.id == runs.first?.id, "同一组按键换个剪法编号变了，选中状态会丢")
+        // 删掉这一块：成片上不再显示、轨上也没有了；删除表存盘读回还在。录下来的按键没动，清掉删除表就回来。
+        var trimmed = KeystrokeStyle(); trimmed.hide(runs.first?.times ?? [])
+        let reloaded = try JSONDecoder().decode(KeystrokeStyle.self, from: JSONEncoder().encode(trimmed))
+        #expect(reloaded.hidden?.count == 1 && reloaded.isValid)
+        #expect(keys.frame(at: 0.3, timeline: first.timeline, style: reloaded) == nil)
+        #expect(keys.runs(timeline: first.timeline, style: reloaded).isEmpty)
         var silent = edit; silent.keystrokes = KeystrokeStyle(); silent.keystrokes?.enabled = false
         let without = pixels(try await renderer.render(url: url, document: document, edit: silent, time: 0.3))
         var keyPixels = 0, keyMatched = 0

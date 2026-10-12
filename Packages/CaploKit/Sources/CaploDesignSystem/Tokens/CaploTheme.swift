@@ -31,6 +31,7 @@ public enum CaploColor {
     public static let mask = Color(nsColor: CaploNSColor.mask)
     public static let textLayer = Color(nsColor: CaploNSColor.textLayer)
     public static let caption = Color(nsColor: CaploNSColor.caption)
+    public static let keys = Color(nsColor: CaploNSColor.keys)
     public static let warning = Color(nsColor: CaploNSColor.warning)
     public static let glassDensity = Color(nsColor: CaploNSColor.glassDensity)
     public static let glassEdge = Color(nsColor: CaploNSColor.glassEdge)
@@ -78,6 +79,8 @@ public enum CaploNSColor {
     public static let textLayer = token("textLayer", 0xC9B8FF)
     /// 字幕轨道的识别色（冰蓝）。
     public static let caption = token("caption", 0x9BE7FF)
+    /// 按键轨道的识别色（青柠）：和声音的薄荷、摄像头的琥珀之间隔着一段，挨着字幕的冰蓝也不混。
+    public static let keys = token("keys", 0xD3EC9B)
     public static let warning = token("warning", 0xFFD08A)
     /// 背景只保留模糊环境色，避免编辑文字与桌面内容重叠；中性黑，绝不染成蓝灰。
     /// 密度要足够压住桌面内容的轮廓（参照系统侧栏材质），只让环境色透过来。

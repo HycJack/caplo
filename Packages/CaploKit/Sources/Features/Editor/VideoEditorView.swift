@@ -84,6 +84,7 @@ struct VideoEditorView: View {
         // 卡片的字与背景在文字面板里改。
         .onChange(of: model.selectedClip) { if model.selectedCard != nil { tab = "文字" } }
         .onChange(of: model.selectedCaption) { if model.selectedCaption != nil { tab = "字幕" } }
+        .onChange(of: model.selectedKeys) { if model.selectedKeys != nil { tab = "按键" } }
         // 导出窗口：格式、分辨率、帧率、画质、声音。
         .sheet(isPresented: Binding(get: { model.showingExport }, set: { model.showingExport = $0 })) { ExportSheet(model: model) }
         // 要添加的时间段已经有镜头：问一下，可以勾"不再提示"。

@@ -35,6 +35,14 @@ struct KeystrokePanel: View {
                     }
                 }
                 .disabled(!style.enabled)
+                // 在时间线按键轨上删掉的按键只是不显示，这里一键全部找回。
+                if let hidden = style.hidden, !hidden.isEmpty {
+                    HStack {
+                        Text(String(localized: "已删除 \(hidden.count) 次按键")).font(.system(size: 11)).foregroundStyle(CaploColor.textSecondary)
+                        Spacer()
+                        Button(String(localized: "恢复")) { model.restoreHiddenKeys() }.buttonStyle(StudioButtonStyle(.quiet, size: .small))
+                    }
+                }
             }
         }
         // 面板开着时画面上有示例键帽，调位置、大小看得见落点；离开面板就撤掉。

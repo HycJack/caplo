@@ -135,6 +135,7 @@ final class EditorWorkspaceView: NSSplitView, NSSplitViewDelegate {
         withObservationTracking {
             timelinePane.timeline.update(edit: model.edit, analysis: model.analysis, selection: model.selectedClipIDs,
                                          primary: model.selectedClip, focus: model.selectedFocus, mask: model.selectedMask, text: model.selectedText, caption: model.selectedCaption,
+                                         keys: model.keyTimeline, keyRun: model.selectedKeys,
                                          zoom: viewport.zoom, fit: viewport.fitRequest, heights: viewport.trackHeights,
                                          reveal: model.revealRequest)
             canvas.aspectRatio = model.edit.layout.aspect

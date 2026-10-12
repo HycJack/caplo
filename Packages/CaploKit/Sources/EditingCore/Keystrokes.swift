@@ -90,8 +90,11 @@ public struct KeystrokeStyle: Codable, Equatable, Sendable {
     /// 播放头处没有按键时，画一组示例键帽：编辑器在"按键"面板开着时打开它，调位置、大小才看得见落点。
     /// 只是预览用的标记，不存盘（不在 `CodingKeys` 里），导出前清掉。
     public var sample = false
+    /// 不显示的按键：在时间线按键轨上删掉的那些，记的是它们的素材时间（升序）。
+    /// 录下来的按键文件不动，所以删错了随时能恢复——清掉这张表就行。nil 与空表等价，旧工程没有这一项。
+    public var hidden: [Double]?
     public init() {}
-    private enum CodingKeys: String, CodingKey { case enabled, filter, theme, x, y, size, hold }
+    private enum CodingKeys: String, CodingKey { case enabled, filter, theme, x, y, size, hold, hidden }
     /// 示例键帽的内容。
     public static let sampleGroups = [["⌘", "K"]]
 
@@ -105,9 +108,27 @@ public struct KeystrokeStyle: Codable, Equatable, Sendable {
     public static let typingLimit = 8
 
     public var isValid: Bool {
-        x.isFinite && (0...1).contains(x) && y.isFinite && (0...1).contains(y)
-            && size.isFinite && Self.sizeRange.contains(size) && hold.isFinite && Self.holdRange.contains(hold)
+        guard x.isFinite, (0...1).contains(x), y.isFinite, (0...1).contains(y),
+              size.isFinite, Self.sizeRange.contains(size), hold.isFinite, Self.holdRange.contains(hold) else { return false }
+        // 查表用二分，表必须有序。
+        let hidden = hidden ?? []
+        return hidden.allSatisfy { $0.isFinite && $0 >= 0 } && zip(hidden, hidden.dropFirst()).allSatisfy { $0 <= $1 }
     }
+
+    /// 素材时间 `time` 处的那次按键是不是被删掉了。按时间认按键（按键没有编号），容差半毫秒。
+    public func hides(_ time: Double) -> Bool {
+        guard let hidden, !hidden.isEmpty else { return false }
+        var lower = 0, upper = hidden.count
+        while lower < upper { let middle = (lower + upper) / 2; if hidden[middle] < time - Self.hiddenTolerance { lower = middle + 1 } else { upper = middle } }
+        return lower < hidden.count && hidden[lower] <= time + Self.hiddenTolerance
+    }
+    /// 删掉这些素材时间上的按键。
+    public mutating func hide(_ times: [Double]) {
+        let added = times.filter { $0.isFinite && $0 >= 0 && !hides($0) }
+        guard !added.isEmpty else { return }
+        hidden = ((hidden ?? []) + added).sorted()
+    }
+    static let hiddenTolerance = 0.0005
 }
 
 /// 这一帧要画的按键：若干组键帽（快捷键是一组；连续打字每个键一组）和整体不透明度。
@@ -118,8 +139,23 @@ public struct KeystrokeFrame: Equatable, Sendable {
     public init(groups: [[String]], alpha: Double, style: KeystrokeStyle) { self.groups = groups; self.alpha = alpha; self.style = style }
 }
 
+/// 时间线按键轨上的一块：成片上连着显示的一组按键——一次快捷键，或一串连续打字。
+public struct KeyRun: Identifiable, Equatable, Sendable {
+    /// 由这一组第一次按键的素材时间推出来，重算多少遍都不变：选中状态靠它认块。
+    public let id: UUID
+    /// 成片时间：从第一次按下到最后一次按下之后停留、淡出完；后面紧跟着别的按键或片段结束时提前收住。
+    public let start: Double
+    public let duration: Double
+    /// 这一组的键帽，按按下的先后。
+    public let caps: [String]
+    /// 这一组里每次按键的素材时间：删除这一块就是把它们记进 `KeystrokeStyle.hidden`。
+    public let times: [Double]
+    /// 块上、提示和菜单里的名字：键帽连起来；一长串打字只留开头。
+    public var title: String { caps.count > 12 ? caps.prefix(12).joined(separator: " ") + " …" : caps.joined(separator: " ") }
+}
+
 /// 录制下来的全部按键，按素材时间排好；逐帧二分查询。
-public struct KeyTimeline: Sendable {
+public struct KeyTimeline: Equatable, Sendable {
     public let presses: [KeyPress]
     public init(presses: [KeyPress] = []) {
         self.presses = presses.filter { $0.isValid && $0.keyCap != nil }.sorted { $0.time < $1.time }
@@ -146,7 +182,7 @@ public struct KeyTimeline: Sendable {
         while lower < upper { let middle = (lower + upper) / 2; if presses[middle].time <= source { lower = middle + 1 } else { upper = middle } }
         // 往回找最近一次要显示的按键；过了停留加淡出的时间就不必再找。
         let visible = style.hold + KeystrokeStyle.fadeOut
-        func shown(_ press: KeyPress) -> Bool { style.filter == .all || press.isShortcut }
+        func shown(_ press: KeyPress) -> Bool { (style.filter == .all || press.isShortcut) && !style.hides(press.time) }
         var index = lower - 1
         while index >= 0, !shown(presses[index]) {
             guard source - presses[index].time < visible else { return nil }
@@ -162,6 +198,8 @@ public struct KeyTimeline: Sendable {
             var cursor = index - 1
             while cursor >= 0, groups.count < KeystrokeStyle.typingLimit {
                 let press = presses[cursor]
+                // 删掉的按键当它不存在，前后两段打字照样接得上。
+                if style.hides(press.time) { cursor -= 1; continue }
                 guard !press.isShortcut, press.time >= clipStart, first.time - press.time <= KeystrokeStyle.typingGap, let cap = press.keyCap else { break }
                 groups.insert([cap], at: 0); first = press; cursor -= 1
             }
@@ -170,5 +208,62 @@ public struct KeyTimeline: Sendable {
         let fadeOut = elapsed <= style.hold ? 1 : max(0, 1 - (elapsed - style.hold) / KeystrokeStyle.fadeOut)
         let alpha = fadeIn * fadeOut
         return alpha > 0.002 ? KeystrokeFrame(groups: groups, alpha: alpha, style: style) : nil
+    }
+
+    /// 成片上会显示出来的各组按键，供时间线画按键轨。分组口径与 `recorded` 一致：
+    /// 快捷键单独一组；普通键间隔不超过 `typingGap` 就接成一串；筛掉的、删掉的不算；只在各自片段里显示。
+    public func runs(timeline: TimelineIndex, style: KeystrokeStyle?) -> [KeyRun] {
+        let style = style ?? KeystrokeStyle()
+        guard style.enabled, style.isValid, !presses.isEmpty else { return [] }
+        let linger = style.hold + KeystrokeStyle.fadeOut
+        var result: [KeyRun] = []
+        // 同一段素材在成片上出现两次（复制了片段）时，两处是同一批按键：编号里带上"第几次出现"区分开。
+        var occurrences: [Double: Int] = [:]
+        for span in timeline.spans {
+            let clip = timeline.clips[span.index]
+            guard clip.card == nil else { continue }
+            let base = timeline.boundaries[span.index]
+            let upper = clip.sourceStart + min(span.end - base, clip.playableDuration)
+            var index = 0, bound = presses.count
+            while index < bound { let middle = (index + bound) / 2; if presses[middle].time < clip.sourceStart { index = middle + 1 } else { bound = middle } }
+            var open: (caps: [String], times: [Double], shortcut: Bool)?
+            // 收住当前这一组：`next` 是下一组第一次按键的素材时间，没有下一组就显示到停留、淡出完。
+            func close(before next: Double?) {
+                guard let run = open, let first = run.times.first, let last = run.times.last else { return }
+                open = nil
+                let fades = last + linger
+                // 淡出前素材就播完了：末帧若被拉长（保持末帧），键帽跟着停在画面上，直到这一段结束。
+                var end = fades >= upper ? span.end : base + (fades - clip.sourceStart)
+                if let next { end = min(end, base + (next - clip.sourceStart)) }
+                let start = max(span.start, base + (first - clip.sourceStart))
+                end = min(end, span.end)
+                guard end > start + 0.000_001 else { return }
+                let occurrence = occurrences[first, default: 0]
+                occurrences[first] = occurrence + 1
+                result.append(KeyRun(id: Self.runID(time: first, occurrence: occurrence), start: start, duration: end - start, caps: run.caps, times: run.times))
+            }
+            while index < presses.count, presses[index].time < upper {
+                let press = presses[index]; index += 1
+                guard style.filter == .all || press.isShortcut, !style.hides(press.time), let caps = press.keyCaps else { continue }
+                if let run = open, !run.shortcut, !press.isShortcut, let last = run.times.last, press.time - last <= KeystrokeStyle.typingGap, let cap = caps.last {
+                    open = (run.caps + [cap], run.times + [press.time], false)
+                    continue
+                }
+                close(before: press.time)
+                open = press.isShortcut ? (caps, [press.time], true) : ([caps.last ?? ""], [press.time], false)
+            }
+            close(before: nil)
+        }
+        return result.sorted { $0.start < $1.start }
+    }
+
+    /// 按键没有编号，块的编号从"第一次按键的素材时间 + 第几次出现"拼出来：同一份数据算出来永远是同一个。
+    private static func runID(time: Double, occurrence: Int) -> UUID {
+        var bytes = [UInt8](repeating: 0, count: 16)
+        withUnsafeBytes(of: time.bitPattern.bigEndian) { bytes.replaceSubrange(0..<8, with: $0) }
+        withUnsafeBytes(of: UInt32(truncatingIfNeeded: occurrence).bigEndian) { bytes.replaceSubrange(8..<12, with: $0) }
+        bytes.replaceSubrange(12..<16, with: Array("KEYS".utf8))
+        return UUID(uuid: (bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
+                           bytes[8], bytes[9], bytes[10], bytes[11], bytes[12], bytes[13], bytes[14], bytes[15]))
     }
 }

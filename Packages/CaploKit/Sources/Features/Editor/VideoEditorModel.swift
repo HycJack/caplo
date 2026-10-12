@@ -39,6 +39,8 @@ final class VideoEditorModel {
     var selectedMask: UUID?
     var selectedText: UUID?
     var selectedCaption: UUID?
+    /// 时间线按键轨上选中的那一组按键（`KeyRun.id`）。
+    var selectedKeys: UUID?
     // MARK: 渲染副本
 
     /// 预编译跟随镜头的缓存键：只有这几项变了才需要重新规划运镜路径。
@@ -144,6 +146,15 @@ final class VideoEditorModel {
     private var pointers: PointerTimeline?
     /// 光标大小滑块的下限：与录制时系统光标同大的倍率；素材未载入或旧工程没有真实光标时按 0.5。
     var systemCursorScale: Double { pointers?.systemCursorScale ?? 0.5 }
+    /// 录制时记下的按键；素材还没在后台解完时为空。
+    var keyTimeline: KeyTimeline { pointers?.keys ?? KeyTimeline() }
+    /// 成片上会显示的各组按键：时间线按键轨上的块。
+    var keyRuns: [KeyRun] { keyTimeline.runs(timeline: TimelineIndex(clips: edit.orderedScreenClips), style: edit.keystrokes) }
+    /// 把在按键轨上删掉的按键全部恢复。一步撤销。
+    func restoreHiddenKeys() {
+        guard edit.keystrokes?.hidden?.isEmpty == false else { return }
+        commit { $0.keystrokes?.hidden = nil }
+    }
     private var closed = false
     /// 麦克风离线语音处理（回声消除与降噪）的进度：打开开关时先在后台把每个片段处理成产物，完成后才切换编辑数据。
     enum VoiceProcessingState: Equatable { case idle, processing(Double), failed(String) }
@@ -359,6 +370,7 @@ final class VideoEditorModel {
         if !edit.maskList.contains(where: { $0.id == selectedMask }) { selectedMask = nil }
         if !edit.textList.contains(where: { $0.id == selectedText }) { selectedText = nil }
         if !edit.captionList.contains(where: { $0.id == selectedCaption }) { selectedCaption = nil }
+        if let selectedKeys, !keyRuns.contains(where: { $0.id == selectedKeys }) { self.selectedKeys = nil }
         position = min(position, edit.duration)
         if let skimPosition { self.skimPosition = min(skimPosition, edit.duration) }
     }
@@ -366,7 +378,7 @@ final class VideoEditorModel {
     var canSplit: Bool { canSplit(at: position) }
     /// 某个时间线时刻能否分割当前选中的块（两侧都要留下最小时长）；右键菜单用它判断"在此处分割"。
     func canSplit(at time: Double) -> Bool {
-        guard ready, selectedFocus == nil, selectedMask == nil, time.isFinite else { return false }
+        guard ready, selectedFocus == nil, selectedMask == nil, selectedKeys == nil, time.isFinite else { return false }
         // 选中一句字幕时，「分割」指的是把这句切成两句，而不是切录制画面。
         if let selectedCaption, let cue = edit.caption(id: selectedCaption) {
             guard let source = edit.sourceTime(at: time) else { return false }
@@ -429,9 +441,22 @@ final class VideoEditorModel {
     /// 清掉所有类别的选中项；换选一个别的东西时先调它，免得两处同时高亮。
     func clearSelection() {
         selectedMedia = nil; selectedMediaID = nil
-        selectedFocus = nil; selectedMask = nil; selectedText = nil; selectedCaption = nil
+        selectedFocus = nil; selectedMask = nil; selectedText = nil; selectedCaption = nil; selectedKeys = nil
     }
     func deleteSelection() {
+        if let selectedKeys {
+            self.selectedKeys = nil
+            // 删一组按键：只是不再显示（记进样式里的删除表），录下来的按键文件不动，按键面板里可以恢复。
+            // 块是按当前数据现算的，编号对不上任何一块（改过筛选、撤销过）就当没选，按下面的顺序往下找。
+            if let run = keyRuns.first(where: { $0.id == selectedKeys }) {
+                commit { edit in
+                    var style = edit.keystrokes ?? KeystrokeStyle()
+                    style.hide(run.times)
+                    edit.keystrokes = style
+                }
+                return
+            }
+        }
         if let selectedCaption {
             commit { $0.captionList.removeAll { $0.id == selectedCaption } }; self.selectedCaption = nil; return
         }
@@ -459,7 +484,7 @@ final class VideoEditorModel {
         }
     }
     func selectClip(_ id: UUID, extending: Bool = false, range: Bool = false) {
-        selectedMedia = nil; selectedMediaID = nil; selectedMask = nil; selectedText = nil; selectedCaption = nil
+        selectedMedia = nil; selectedMediaID = nil; selectedMask = nil; selectedText = nil; selectedCaption = nil; selectedKeys = nil
         // 范围选择按时间线上的先后排，不按存储顺序：插入卡片、复制之后两者并不一致。
         let ordered = edit.clips.enumerated().sorted { ($0.element.timelineStart ?? 0, $0.offset) < ($1.element.timelineStart ?? 0, $1.offset) }.map(\.element)
         if range, let selectedClip, let start = ordered.firstIndex(where: { $0.id == selectedClip }), let end = ordered.firstIndex(where: { $0.id == id }) {
@@ -504,6 +529,8 @@ final class VideoEditorModel {
         if selectedMedia == .system || selectedMedia == .microphone { selectedMedia = nil; selectedMediaID = nil }
     }
     func duplicateSelection() {
+        // 按键是录下来的事实，没有"再来一份"；不拦的话会落到最后去复制常驻选中的画面片段。
+        guard selectedKeys == nil else { NSSound.beep(); return }
         if let id = selectedCaption, var copy = edit.caption(id: id) {
             copy.id = UUID()
             let length = copy.sourceDuration

@@ -40,6 +40,7 @@ struct TimelineViewportBridge: NSViewRepresentable {
         view.liveResizing = viewport.liveResizing
         view.update(edit: model.edit, analysis: model.analysis, selection: model.selectedClipIDs,
                     primary: model.selectedClip, focus: model.selectedFocus, mask: model.selectedMask, text: model.selectedText, caption: model.selectedCaption,
+                    keys: model.keyTimeline, keyRun: model.selectedKeys,
                     zoom: viewport.zoom, fit: viewport.fitRequest, heights: viewport.trackHeights, reveal: model.revealRequest)
     }
     static func dismantleNSView(_ view: TimelineViewportView, coordinator: ()) { view.detach() }
@@ -60,6 +61,9 @@ final class TimelineViewportView: NSView {
     private var maskSelection: UUID?
     private var textSelection: UUID?
     private var captionSelection: UUID?
+    private var keySelection: UUID?
+    /// 录制时记下的按键：素材在后台解完才有，所以随 `update` 传进来，变了就重排按键轨。
+    private var keyTimeline = KeyTimeline()
     private var primary: UUID?
     private var scale = 60.0
     private var offset = 0.0
@@ -140,6 +144,10 @@ final class TimelineViewportView: NSView {
         var mask = false
         var text = false
         var caption = false
+        /// 按键轨上的块：一组按键。只能选中和删除，不能拖、不能改长短——它是录下来的事实，时刻跟着素材走。
+        var keys = false
+        /// 按键块里的键帽，按按下的先后；块上画的是它们，不是标题文字。
+        var caps: [String] = []
     }
     private var blocks: [Block] = []
     private var rows: [[Block]] = []
@@ -224,6 +232,15 @@ final class TimelineViewportView: NSView {
             let insertion = rows.firstIndex { $0.contains { $0.role != nil } } ?? rows.count
             rows.insert(captionBlocks, at: insertion)
             blocks += captionBlocks
+        }
+        // 按键也独占一条轨，贴在媒体行上面（字幕之下）：一组按键一块，关掉显示或没录按键时没有这一行。
+        let keyBlocks = keyTimeline.runs(timeline: timing, style: edit.keystrokes).map {
+            Block(id: $0.id, role: nil, title: $0.title, defaultTitle: $0.title, start: $0.start, duration: $0.duration, span: nil, keys: true, caps: $0.caps)
+        }
+        if !keyBlocks.isEmpty {
+            let insertion = rows.firstIndex { $0.contains { $0.role != nil } } ?? rows.count
+            rows.insert(keyBlocks, at: insertion)
+            blocks += keyBlocks
         }
         rowByBlock.removeAll(); audioRows.removeAll(); nextStart.removeAll()
         for row in rows where row.count > 1 {
@@ -341,8 +358,10 @@ final class TimelineViewportView: NSView {
 
     /// SwiftUI 每次刷新都会调用；只有内容或几何变化才重绘，与每帧播放位置分离。
     private var lastReveal = 0
-    func update(edit: VideoEdit, analysis: TimelineAnalysis, selection: Set<UUID>, primary: UUID?, focus: UUID?, mask: UUID? = nil, text: UUID? = nil, caption: UUID? = nil, zoom: Double, fit: Int, heights: [Double]? = nil, reveal: (id: UUID, serial: Int)? = nil) {
+    func update(edit: VideoEdit, analysis: TimelineAnalysis, selection: Set<UUID>, primary: UUID?, focus: UUID?, mask: UUID? = nil, text: UUID? = nil, caption: UUID? = nil, keys: KeyTimeline = KeyTimeline(), keyRun: UUID? = nil, zoom: Double, fit: Int, heights: [Double]? = nil, reveal: (id: UUID, serial: Int)? = nil) {
         var changed = false
+        let keysChanged = keys != keyTimeline
+        if keysChanged || keyRun != keySelection { keyTimeline = keys; keySelection = keyRun; changed = true }
         if let heights, heights.count == 4 {
             let clamped = heights.enumerated().map { min(200, max($0.offset == 0 ? 40 : 26, $0.element.isFinite ? $0.element : 40)) }
             if clamped != trackHeights { trackHeights = clamped; changed = true }
@@ -350,7 +369,7 @@ final class TimelineViewportView: NSView {
         if self.edit.clips != edit.clips { index = TimelineIndex(clips: edit.clips) }
         if self.edit != edit || self.selection != selection || self.primary != primary || self.focus != focus || self.maskSelection != mask || self.textSelection != text || self.captionSelection != caption { changed = true }
         if analysis.system.count != self.analysis.system.count || analysis.microphone.count != self.analysis.microphone.count { changed = true }
-        let contentChanged = self.edit != edit
+        let contentChanged = self.edit != edit || keysChanged
         self.edit = edit; if contentChanged { rebuildBlocks() }; self.analysis = analysis; self.selection = selection; self.primary = primary; self.focus = focus; self.maskSelection = mask; self.textSelection = text; self.captionSelection = caption
         let nextScale = drag == nil ? 60 * pow(2, zoom) : scale
         if nextScale != scale {
@@ -617,13 +636,20 @@ final class TimelineViewportView: NSView {
         return moving == id
     }
     private func blockRect(_ block: Block, row: Int) -> CGRect {
-        TimelineInteractionGeometry.blockRect(start: block.start, duration: block.duration, scale: scale, offset: offset,
+        let rect = TimelineInteractionGeometry.blockRect(start: block.start, duration: block.duration, scale: scale, offset: offset,
             header: timeOrigin, y: rowY(row) + Self.blockInset, height: rowHeight - 2 * Self.blockInset,
             limit: nextStart[block.id] ?? .infinity)
+        guard block.keys else { return rect }
+        // 按键块是一条细胶囊，在行里垂直居中，右端让出一条缝：连续打字时一组紧挨一组，
+        // 和别的块一样撑满行高、首尾相接的话就是一整面色块，看不出哪里是一组（2026-10-12 用户指出）。
+        return CGRect(x: rect.minX, y: rowY(row) + (rowHeight - Self.keyBlockHeight) / 2,
+                      width: rect.width > 8 ? rect.width - 2 : rect.width, height: Self.keyBlockHeight)
     }
+    static let keyBlockHeight = 24.0
     /// 同一行里紧跟在后面那一块的起点：短块的最小外观宽度不越过它。
     private var nextStart: [UUID: Double] = [:]
     private func color(for block: Block) -> NSColor {
+        if block.keys { return CaploNSColor.keys }
         if block.caption { return CaploNSColor.caption }
         // 卡片是插进画面轨的一段文字画面，按文字层的颜色画，一眼看得出它不是录下来的画面。
         if block.text || block.card || block.hold { return CaploNSColor.textLayer }
@@ -632,6 +658,7 @@ final class TimelineViewportView: NSView {
     }
     /// 轨道类别图标：实心、圆润的符号，轨头里再垫一块类别色的圆角小徽章，与块的颜色对应。
     private func symbol(for block: Block) -> String {
+        if block.keys { return "keyboard.fill" }
         if block.caption { return "captions.bubble.fill" }
         if block.card { return "rectangle.inset.filled" }
         if block.hold { return "pause.rectangle.fill" }
@@ -949,7 +976,7 @@ final class TimelineViewportView: NSView {
                         outline.setLineDash([4, 4], count: 2, phase: 0); outline.stroke()
                     } else { drawBlock(block, row: number) }
                     if block.role == .screen { visibleClipDrawCount += 1 }
-                    if block.role == nil, !block.mask, !block.text, !block.caption { visibleFocusDrawCount += 1 }
+                    if block.role == nil, !block.mask, !block.text, !block.caption, !block.keys { visibleFocusDrawCount += 1 }
                     // 只记下"画了哪些块"，辅助功能元素等有人问的时候再造。
                     // 每帧为几百个块各造一个 NSAccessibilityElement，光这一项就吃掉两三毫秒，
                     // 而 VoiceOver 一秒也问不了几次。
@@ -1009,6 +1036,7 @@ final class TimelineViewportView: NSView {
         }
     }
     private func isSelected(_ block: Block) -> Bool {
+        if block.keys { return model.selectedKeys == block.id }
         if block.caption { return model.selectedCaption == block.id }
         if block.text { return model.selectedText == block.id }
         if block.mask { return model.selectedMask == block.id }
@@ -1023,7 +1051,8 @@ final class TimelineViewportView: NSView {
         defer { needsDisplay = true }
         if block.role == .screen { model.selectClip(block.id); return }
         model.clearSelection()
-        if block.caption { model.selectedCaption = block.id }
+        if block.keys { model.selectedKeys = block.id }
+        else if block.caption { model.selectedCaption = block.id }
         else if block.text { model.selectedText = block.id }
         else if block.mask { model.selectedMask = block.id }
         else if let role = block.role { model.selectedMedia = role; model.selectedMediaID = block.id }
@@ -1033,7 +1062,7 @@ final class TimelineViewportView: NSView {
     private func deselect() {
         guard model.selectedClip != nil || !model.selectedClipIDs.isEmpty || model.selectedFocus != nil
                 || model.selectedMask != nil || model.selectedText != nil || model.selectedCaption != nil
-                || model.selectedMediaID != nil else { return }
+                || model.selectedKeys != nil || model.selectedMediaID != nil else { return }
         model.clearSelection()
         model.selectedClip = nil; model.selectedClipIDs = []
         needsDisplay = true
@@ -1042,6 +1071,7 @@ final class TimelineViewportView: NSView {
     private func drawBlock(_ block: Block, row: Int) {
         let rect = blockRect(block, row: row)
         guard rect.maxX > timeOrigin, rect.minX < bounds.width else { return }
+        if block.keys { drawKeyCaps(block, in: rect); return }
         let color = color(for: block)
         // 标题在左上角（像 Logic 的片段名）：贴着块在视口里可见部分的左缘，
         // 块从视口左边外开始时名字也看得见；块比名字窄就截断。以前标题固定在整块正中，
@@ -1125,6 +1155,41 @@ final class TimelineViewportView: NSView {
             }
         }
     }
+    /// 按键块的内容：一排小键帽，和成片上显示的样子对应；放不下的收成"+N"。
+    /// 贴着块在视口里可见部分的左缘排，块从视口左边外开始时也看得见是哪些键。
+    private func drawKeyCaps(_ block: Block, in rect: CGRect) {
+        let height = 16.0, gap = 2.0, size = 10.0
+        let right = rect.maxX - 4
+        var x = max(rect.minX, timeOrigin) + 4, drawn = 0
+        let chips = NSBezierPath()
+        var texts: [(String, CGRect)] = []
+        for (number, cap) in block.caps.enumerated() {
+            // 空格在成片上写的是 space；这里地方小，换成一个字符的 ␣。
+            let text = cap == "space" ? "␣" : cap
+            let textWidth = TimelineTextRenderer.width(text, size: size, bold: true)
+            let width = max(height, textWidth + 8)
+            // 后面还有键的话，先留出"+N"的位置：宁可少画一个键帽，也不让数字被挤掉。
+            let remaining = block.caps.count - number - 1
+            let reserve = remaining > 0 ? TimelineTextRenderer.width("+\(remaining)", size: 9, bold: true) + gap + 2 : 0
+            guard x + width + reserve <= right else { break }
+            let chip = CGRect(x: x, y: rect.midY - height / 2, width: width, height: height)
+            chips.appendRoundedRect(chip, xRadius: 4, yRadius: 4)
+            texts.append((text, CGRect(x: chip.midX - textWidth / 2, y: chip.midY - 6, width: textWidth, height: 12)))
+            x += width + gap; drawn += 1
+        }
+        if !chips.isEmpty {
+            CaploNSColor.textPrimary.withAlphaComponent(0.16).setFill(); chips.fill()
+            for (text, frame) in texts { label(text, in: frame, color: CaploNSColor.textPrimary, size: size, bold: true) }
+        }
+        if drawn < block.caps.count {
+            let more = "+\(block.caps.count - drawn)"
+            let width = TimelineTextRenderer.width(more, size: 9, bold: true)
+            if x + width <= right { label(more, in: CGRect(x: x + 1, y: rect.midY - 5.5, width: width, height: 11), color: CaploNSColor.textSecondary, size: 9, bold: true) }
+        }
+        if isSelected(block) {
+            accent.setStroke(); let border = NSBezierPath(roundedRect: rect.insetBy(dx: 0.75, dy: 0.75), xRadius: 4.5, yRadius: 4.5); border.lineWidth = 1.5; border.stroke()
+        }
+    }
     override func mouseDown(with event: NSEvent) {
         window?.makeFirstResponder(self)
         guard model.ready else { return }
@@ -1151,6 +1216,8 @@ final class TimelineViewportView: NSView {
             let block = hit?.0 ?? first
             if block.role == .screen, event.modifierFlags.contains(.command) { model.selectClip(block.id, extending: true) }
             else { select(block) }
+            // 按键轨的位置是固定的，不参与换行。
+            if block.keys { return }
             retainedExtent = timelineExtent
             drag = Drag(kind: .reorder(block.id), origin: point, snapshot: edit, timeline: index, scale: scale, offset: offset, rowIDs: rows.map { $0.map(\.id) }, snapEdges: [])
             return
@@ -1164,6 +1231,8 @@ final class TimelineViewportView: NSView {
         let block = hit.0
         if block.role == .screen, event.modifierFlags.contains(.command) { model.selectClip(block.id, extending: true) }
         else { select(block) }
+        // 按键块只选中：它的时刻是录下来的，拖不动。
+        if block.keys { return }
         retainedExtent = timelineExtent
         drag = Drag(kind: .block(block, hit.1), origin: point, snapshot: edit, timeline: index, scale: scale, offset: offset, rowIDs: rows.map { $0.map(\.id) }, snapEdges: snapTargets(for: block, edge: hit.1))
     }
@@ -1221,6 +1290,13 @@ final class TimelineViewportView: NSView {
         let header = NSMenuItem(title: block.title + " · " + TimelineTime.code(block.start), action: nil, keyEquivalent: "")
         header.isEnabled = false
         menu.addItem(header)
+        // 按键块只有删除：不能切、不能复制、名字就是键帽。
+        if block.keys {
+            menu.addItem(.separator())
+            let delete = NSMenuItem(title: String(localized: "删除"), action: #selector(deleteBlock(_:)), keyEquivalent: "\u{8}")
+            delete.keyEquivalentModifierMask = []; delete.target = self; menu.addItem(delete)
+            return menu
+        }
         // 分割：右键落点处，以及播放头处；两侧留不下最小时长就禁用。聚焦、遮罩、文字与卡片切不得，不列。
         let splittable = block.caption || (block.role != nil && !block.card)
         if splittable {
@@ -1296,7 +1372,7 @@ final class TimelineViewportView: NSView {
     }
     /// 空白处的"在此处添加"：按这一行装的是哪种叠加层决定；素材行与字幕行没有可凭空添加的东西。
     private func addItem(forRowOf sample: Block?, at time: Double) -> NSMenuItem? {
-        guard let sample, sample.role == nil, !sample.caption else { return nil }
+        guard let sample, sample.role == nil, !sample.caption, !sample.keys else { return nil }
         let (title, action): (String, Selector) = sample.mask ? (String(localized: "添加遮罩"), #selector(addMaskHere(_:)))
             : sample.text ? (String(localized: "添加文字"), #selector(addTextHere(_:))) : (String(localized: "添加聚焦"), #selector(addFocusHere(_:)))
         let item = NSMenuItem(title: String(localized: "在此处") + title + " · " + TimelineTime.code(time), action: action, keyEquivalent: "")
@@ -1500,7 +1576,8 @@ final class TimelineViewportView: NSView {
         if first < last {
             for row in first..<last {
                 var lastEdge = -Double.infinity
-                for block in visibleMembers(rows[row]) {
+                // 按键块改不了长短，两端不给调整光标。
+                for block in visibleMembers(rows[row]) where !block.keys {
                     let rect = blockRect(block, row: row)
                     // 与绘制同一条规则：挤在同一像素列里的块只留一份热区。
                     if rect.maxX < lastEdge + 2 { continue }
