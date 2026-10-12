@@ -5,7 +5,8 @@ import EditingCore
 public enum EditStorage {
     /// `wallpaper`：当前桌面壁纸文件，只在**新建**这份编辑数据时用作默认背景。
     /// 取壁纸要碰 `NSScreen`，得在主线程上问，所以由调用方取好传进来（`DesktopWallpaper.currentURL()`）。
-    public static func load(in url: URL, document: ProjectDocument, wallpaper: URL? = nil) throws -> VideoEdit {
+    /// `watermark`：新工程（还没有编辑数据）带上的默认水印；已有编辑数据的工程不受它影响。
+    public static func load(in url: URL, document: ProjectDocument, wallpaper: URL? = nil, watermark: Watermark? = nil) throws -> VideoEdit {
         let path = url.appendingPathComponent("edits.json")
         guard FileManager.default.fileExists(atPath: path.path) else {
             var edit = VideoEdit(duration: document.duration)
@@ -15,6 +16,7 @@ public enum EditStorage {
                 edit.layout.backgroundImage = imported
             }
             if document.segments.contains(where: { $0.files[.camera] != nil }) { edit.camera = CameraLayout() }
+            if let watermark, watermark.isValid { edit.watermark = watermark }
             // 指针事件只解析一次：光标样式判断与自动镜头共用（长录制的事件文件解析两遍要多花几百毫秒）。
             let samples = try events(in: url, document: document)
             if document.capture?.pointerEnabled == true {

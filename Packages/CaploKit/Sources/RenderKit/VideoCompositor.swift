@@ -347,8 +347,13 @@ public enum SceneRenderer {
     public static func frame(source full: CIImage?, edit: VideoEdit, time: Double, size: CGSize, camera: CIImage? = nil, pointer: PointerFrame = PointerFrame(), backgroundImage: CIImage? = nil, backdrop: CIImage? = nil, timeline: TimelineIndex? = nil, croppedFocuses: [FocusSegment]? = nil, keys: KeystrokeFrame? = nil) -> CIImage {
         let picture = scene(source: full, edit: edit, time: time, size: size, camera: camera, pointer: pointer, backgroundImage: backgroundImage,
                             backdrop: backdrop, timeline: timeline, croppedFocuses: croppedFocuses)
-        guard let keys, let layer = KeystrokeRenderer.shared.image(for: keys, canvas: size) else { return picture }
-        return layer.composited(over: picture).cropped(to: CGRect(origin: .zero, size: size))
+        // 水印压在画面、文字与字幕之上，按键再压在水印之上（按键只出现一两秒，不该被挡）。
+        var result = picture
+        if let watermark = edit.watermark, let layer = WatermarkRenderer.shared.image(for: watermark, canvas: size) {
+            result = layer.composited(over: result)
+        }
+        if let keys, let layer = KeystrokeRenderer.shared.image(for: keys, canvas: size) { result = layer.composited(over: result) }
+        return result === picture ? picture : result.cropped(to: CGRect(origin: .zero, size: size))
     }
 
     private static func scene(source full: CIImage?, edit: VideoEdit, time: Double, size: CGSize, camera: CIImage?, pointer: PointerFrame, backgroundImage: CIImage?, backdrop: CIImage?, timeline: TimelineIndex?, croppedFocuses: [FocusSegment]?) -> CIImage {

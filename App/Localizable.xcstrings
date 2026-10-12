@@ -1166,6 +1166,17 @@
         }
       }
     },
+    "例如：@你的名字": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "e.g. @yourname"
+          }
+        }
+      }
+    },
     "例如：产品演示": {
       "extractionState": "manual",
       "localizations": {
@@ -5672,6 +5683,17 @@
         }
       }
     },
+    "新录制也用这个水印": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Use for New Recordings"
+          }
+        }
+      }
+    },
     "新版本需要更新的 macOS。": {
       "extractionState": "manual",
       "localizations": {
@@ -6273,6 +6295,17 @@
           "stringUnit": {
             "state": "translated",
             "value": "Show Keystrokes"
+          }
+        }
+      }
+    },
+    "显示水印": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Show Watermark"
           }
         }
       }
@@ -7231,6 +7264,28 @@
           "stringUnit": {
             "state": "translated",
             "value": "Ratio"
+          }
+        }
+      }
+    },
+    "水印": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Watermark"
+          }
+        }
+      }
+    },
+    "水印图片找不到了，请重新选择。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The watermark image is missing. Choose it again."
           }
         }
       }
@@ -10377,6 +10432,17 @@
           "stringUnit": {
             "state": "translated",
             "value": "Choose Location"
+          }
+        }
+      }
+    },
+    "选择图片": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Choose Image"
           }
         }
       }

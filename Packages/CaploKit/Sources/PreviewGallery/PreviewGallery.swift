@@ -158,6 +158,9 @@ struct PreviewGallery {
             // 卡片正中：画面层完全退场，只有背景与卡片上的字（演示工程第 9 秒插了一块 3 秒的章节卡片）。
             try await render(VideoEditorPreview(projectURL: URL(fileURLWithPath: path), time: 10.5), name: "editor-card", size: CGSize(width: 1360, height: 860), scheme: .dark, output: output)
             try await render(VideoEditorPreview(projectURL: URL(fileURLWithPath: path), time: 2.4, initialTab: "光标"), name: "editor-cursor", size: CGSize(width: 1360, height: 860), scheme: .dark, output: output)
+            // 水印分组默认收起，展开它快照里才看得到。
+            UserDefaults.standard.set(true, forKey: "editor.watermark.expanded")
+            try await render(VideoEditorPreview(projectURL: URL(fileURLWithPath: path), initialTab: "布局"), name: "editor-watermark", size: CGSize(width: 1360, height: 1700), scheme: .dark, output: output)
             try await render(VideoEditorPreview(projectURL: URL(fileURLWithPath: path), time: 2.4, initialTab: "按键"), name: "editor-keys", size: CGSize(width: 1360, height: 860), scheme: .dark, output: output)
             try await render(VideoEditorPreview(projectURL: URL(fileURLWithPath: path), time: 6, initialTab: "按键"), name: "editor-keys-sample", size: CGSize(width: 1360, height: 860), scheme: .dark, output: output)
             if argument == "--pointer-demo" {

@@ -90,6 +90,7 @@ struct CanvasPanel: View {
                 EditorSlider(model: model, title: String(localized: "距离"), value: Binding(get: { model.edit.layout.shadowOffset }, set: { model.edit.layout.shadowOffset = $0 }), range: -40...40, decimals: 0, defaultValue: CanvasLayout.defaultShadowOffset, detents: [0])
             }
         }
+        WatermarkSection(model: model)
         PanelSection(String(localized: "预设"), info: String(localized: "不含自定义背景图片")) {
             // 预设用下拉选择：当前布局与哪个预设一致就显示哪个，否则显示占位；没有预设时下拉禁用并给一行说明。
             SelectField(value: matchingPreset?.name, placeholder: presets.presets.isEmpty ? String(localized: "还没有预设") : String(localized: "选择预设…"), accessibilityName: String(localized: "布局预设"), sections: [

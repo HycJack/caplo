@@ -109,6 +109,19 @@ import RenderKit
         }
         #expect(keyPixels > 500, "键帽没有画到预览上")
         #expect(Double(keyMatched) / Double(max(1, keyPixels)) > 0.85, "导出的键帽与预览不一致")
+        // 水印：和按键走同一个合成入口，画在右下角；存盘读回不丢，文件名带路径的图片水印被校验拒绝。
+        var marked = silent; marked.watermark = Watermark(); marked.watermark?.text = "Caplo"; marked.watermark?.tone = .dark; marked.watermark?.opacity = 1
+        try EditStorage.save(marked, in: url, document: document)
+        #expect(try EditStorage.load(in: url, document: document).watermark?.text == "Caplo")
+        let stamped = pixels(try await renderer.render(url: url, document: document, edit: marked, time: 0.3))
+        var corner = 0, elsewhere = 0
+        for index in stride(from: 0, to: stamped.count, by: 4) where (0..<3).map({ abs(Int(stamped[index + $0]) - Int(without[index + $0])) }).max()! > 30 {
+            let pixel = index / 4, x = pixel % 1280, y = pixel / 1280
+            if x > 1280 * 3 / 4, y > 720 * 3 / 4 { corner += 1 } else { elsewhere += 1 }
+        }
+        #expect(corner > 150 && elsewhere == 0, "水印像素：右下角 \(corner)，别处 \(elsewhere)")
+        var escaping = Watermark(); escaping.kind = .image; escaping.image = "../secret.png"
+        #expect(!escaping.isValid)
     }
     var hidden = edit; hidden.pointer?.cursorVisible = false; hidden.pointer?.clicksVisible = false
     try ProjectMedia.updatePresentation(item: item, previous: edit, edit: hidden)

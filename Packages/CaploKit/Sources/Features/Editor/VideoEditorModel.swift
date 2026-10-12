@@ -210,10 +210,12 @@ final class VideoEditorModel {
             // 解码 + 编码要一百多毫秒，第一次打开还要解 36 MB 事件、跑一遍自动聚焦，界面会卡住一秒以上。
             // 壁纸要问 NSScreen，只能在主线程取好再带过去。
             let url = entry.url, document = entry.document, wallpaper = DesktopWallpaper.currentURL()
+            // 用户设过"新录制也用这个水印"：新工程第一次打开时带上它。
+            let watermark = Watermark.defaultForNewProjects()
             let camera = document.segments.contains { $0.files[.camera] != nil }
             let system = audioTracks.contains(.system), microphone = audioTracks.contains(.microphone)
             let (loaded, missing) = try await Task.detached(priority: .userInitiated) { () throws -> (VideoEdit, Int) in
-                var edit = try EditStorage.load(in: url, document: document, wallpaper: wallpaper)
+                var edit = try EditStorage.load(in: url, document: document, wallpaper: wallpaper, watermark: watermark)
                 edit.prepareLayerEditing(camera: camera, system: system, microphone: microphone)
                 return (edit, ProjectStorage.missingMedia(in: document, at: url).count)
             }.value

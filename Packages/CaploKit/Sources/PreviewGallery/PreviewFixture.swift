@@ -73,6 +73,9 @@ enum PreviewFixture {
         if let card = edit.insertCard(at: 9, duration: 3) {
             edit.updateCard(id: card) { $0.text.text = "第二部分\n上线与发布"; $0.background = .ink }
         }
+        // 右下角一行文字水印：布局面板的"水印"分组与成片上的效果都有东西可看。
+        var watermark = Watermark(); watermark.text = "@caplo"; watermark.tone = .dark
+        edit.watermark = watermark
         try EditStorage.save(edit, in: url, document: document)
         return url
     }
