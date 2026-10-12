@@ -73,6 +73,8 @@ public struct ExportSettings: Codable, Equatable, Sendable {
     /// 导出完成后在访达中显示。它是一项独立偏好（`export.revealsInFinder`，设置页与导出窗口共用），
     /// 不随"记住这些设置"的开关变化，所以不进编码。
     public var revealsInFinder = true
+    /// 导出完成后把成片文件放到剪贴板，可以直接粘贴到聊天、邮件、文档里。同样是独立偏好（`export.copiesToClipboard`）。
+    public var copiesToClipboard = false
 
     public init() {}
 
@@ -134,6 +136,7 @@ public struct ExportSettings: Codable, Equatable, Sendable {
     static let folderMigrationKey = "export.folder.caploDefault"
     static let rememberKey = "export.remember"
     public static let revealKey = "export.revealsInFinder"
+    public static let clipboardKey = "export.copiesToClipboard"
 
     /// 记住的设置；没记过、或用户关掉了"记住"、或旧版本字段对不上，就用默认值。
     public static func remembered(in defaults: UserDefaults = .standard) -> ExportSettings {
@@ -141,6 +144,7 @@ public struct ExportSettings: Codable, Equatable, Sendable {
         if remembersChoices(in: defaults), let data = defaults.data(forKey: defaultsKey),
            let decoded = try? JSONDecoder().decode(ExportSettings.self, from: data) { value = decoded }
         value.revealsInFinder = defaults.object(forKey: revealKey) as? Bool ?? true
+        value.copiesToClipboard = defaults.bool(forKey: clipboardKey)
         value.normalize()
         return value
     }

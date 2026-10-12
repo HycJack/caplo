@@ -32,11 +32,13 @@ public struct CaploSettingsView: View {
 
     @AppStorage("recording.countdown") private var countdown = 3
     @AppStorage("recording.frameRate") private var frameRate = 60
+    @AppStorage("recording.hideDesktopIcons") private var hideDesktopIcons = false
     @AppStorage(RecordingKeyPreferences.key) private var keyCapture = KeyCaptureMode.off
     @AppStorage("recording.microphone") private var microphone = false
     @AppStorage("recording.systemAudio") private var systemAudio = false
     @AppStorage("recording.camera") private var camera = false
     @AppStorage(ExportSettings.revealKey) private var revealAfterExport = true
+    @AppStorage(ExportSettings.clipboardKey) private var copyAfterExport = false
     @State private var section: Section = .general
     @State private var launchAtLogin = AppPresence.loginItemState
     @State private var language = AppLanguage.selection
@@ -201,6 +203,9 @@ public struct CaploSettingsView: View {
             SettingsRow(String(localized: "帧率"), caption: frameRate == 60 ? String(localized: "滚动与光标运动更顺滑，文件更大；预览与导出按同一帧率。") : String(localized: "更省空间，适合静态内容较多的演示。")) {
                 ChipGroup([30, 60], selection: $frameRate) { "\($0) fps" }
             }
+            SettingsRow(String(localized: "隐藏桌面图标"), caption: String(localized: "全屏与区域录制时只留壁纸。")) {
+                Toggle("隐藏桌面图标", isOn: $hideDesktopIcons).toggleStyle(StudioToggleStyle(embedded: true))
+            }
         }
         SettingsGroup(String(localized: "开始录制")) {
             SettingsRow(String(localized: "倒计时")) {
@@ -264,6 +269,9 @@ public struct CaploSettingsView: View {
         SettingsGroup(String(localized: "导出完成后")) {
             SettingsRow(String(localized: "在访达中显示"), caption: String(localized: "导出完成后打开访达并选中导出的文件。")) {
                 Toggle("在访达中显示", isOn: $revealAfterExport).toggleStyle(StudioToggleStyle(embedded: true))
+            }
+            SettingsRow(String(localized: "拷贝到剪贴板"), caption: String(localized: "导出完成后可直接粘贴成片文件。")) {
+                Toggle("拷贝到剪贴板", isOn: $copyAfterExport).toggleStyle(StudioToggleStyle(embedded: true))
             }
         }
     }

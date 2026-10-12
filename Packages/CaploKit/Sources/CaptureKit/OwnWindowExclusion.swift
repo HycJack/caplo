@@ -67,10 +67,20 @@ public struct OwnWindowExclusion {
     /// 可见窗口里有过滤器还没排除的，就要重建过滤器。
     static func needsRefresh(excluded: Set<CGWindowID>, visible: Set<CGWindowID>) -> Bool { !visible.isSubset(of: excluded) }
 
-    public func filter(display: SCDisplay) -> SCContentFilter {
-        windows.isEmpty
+    /// `extra`：另外要从画面里拿掉的窗口（如访达画桌面图标的那几层，见 `desktopIconWindows`）。
+    public func filter(display: SCDisplay, alsoExcluding extra: [SCWindow] = []) -> SCContentFilter {
+        let excluded = windows + extra
+        return excluded.isEmpty
             ? SCContentFilter(display: display, excludingApplications: applications, exceptingWindows: [])
-            : SCContentFilter(display: display, excludingWindows: windows)
+            : SCContentFilter(display: display, excludingWindows: excluded)
+    }
+
+    /// 访达画桌面图标用的窗口（每块显示器一层，位于"桌面图标"层级）。从录制里排除它们，桌面就只剩壁纸——
+    /// 壁纸是程序坞画的另一层，不受影响；访达的普通窗口在别的层级，也不受影响。
+    /// 要用**包含桌面窗口**的内容快照来找：默认那种快照把它们略掉了。
+    public static func desktopIconWindows(in content: SCShareableContent) -> [SCWindow] {
+        let level = Int(CGWindowLevelForKey(.desktopIconWindow))
+        return content.windows.filter { $0.owningApplication?.bundleIdentifier == "com.apple.finder" && $0.windowLayer == level }
     }
 
     /// 快照里找不到自己时写进日志的线索：本进程可见窗口与快照里没标所属应用的窗口。

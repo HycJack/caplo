@@ -113,6 +113,8 @@ struct ExportSheet: View {
                         .help("下次导出沿用这些参数与位置")
                     Toggle("完成后在访达中显示", isOn: $settings.revealsInFinder).toggleStyle(.checkbox)
                         .onChange(of: settings.revealsInFinder) { _, value in UserDefaults.standard.set(value, forKey: ExportSettings.revealKey) }
+                    Toggle("完成后拷贝到剪贴板", isOn: $settings.copiesToClipboard).toggleStyle(.checkbox)
+                        .onChange(of: settings.copiesToClipboard) { _, value in UserDefaults.standard.set(value, forKey: ExportSettings.clipboardKey) }
                 }
                 .font(CaploFont.caption).foregroundStyle(CaploColor.textSecondary)
                 Spacer()

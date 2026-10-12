@@ -24,14 +24,36 @@ final class RegionSession {
     private let onCancel: () -> Void
     private var committed = false
 
-    /// 在鼠标所在显示器开始框选；已有会话则先撤掉。
+    /// 开始框选；已有会话则先撤掉。上次录制用过的区域还记着、那块显示器也还在，就直接把那个框摆出来
+    /// （可以马上按 REC，也可以拖动、调整，或在框外重新拖一个）；否则在鼠标所在显示器上等用户拖。
     static func begin(onCommit: @escaping (Selection) -> Void, onChange: @escaping (Selection) -> Void, onCancel: @escaping () -> Void) {
         dismiss()
+        if let last = lastRecorded(), let screen = NSScreen.screens.first(where: { displayID(of: $0) == last.displayID }) {
+            let session = RegionSession(screen: screen, displayID: last.displayID, onCommit: onCommit, onChange: onChange, onCancel: onCancel)
+            current = session
+            session.show()
+            session.overlay.preset(last.rect)
+            return
+        }
         let mouse = NSEvent.mouseLocation
         guard let screen = NSScreen.screens.first(where: { $0.frame.contains(mouse) }) ?? NSScreen.main,
               let displayID = displayID(of: screen) else { onCancel(); return }
         current = RegionSession(screen: screen, displayID: displayID, onCommit: onCommit, onChange: onChange, onCancel: onCancel)
         current?.show()
+    }
+
+    // MARK: 记住上次录制的区域
+
+    private static let lastRegionKey = "recording.lastRegion"
+    /// 真正开始录制时记下这次的区域与它所在的显示器（只框了没录的不算）。
+    static func rememberRecorded(_ rect: CGRect, displayID: CGDirectDisplayID) {
+        guard rect.width >= 32, rect.height >= 32 else { return }
+        UserDefaults.standard.set([Double(displayID), rect.minX, rect.minY, rect.width, rect.height], forKey: lastRegionKey)
+    }
+    static func lastRecorded() -> Selection? {
+        guard let values = UserDefaults.standard.array(forKey: lastRegionKey) as? [Double], values.count == 5,
+              values.allSatisfy(\.isFinite), values[0] >= 0, values[3] >= 32, values[4] >= 32 else { return nil }
+        return Selection(displayID: CGDirectDisplayID(values[0]), rect: CGRect(x: values[1], y: values[2], width: values[3], height: values[4]))
     }
 
     /// 清空当前框，让用户重新拖一次；没有会话时开始新会话。
@@ -156,6 +178,13 @@ private final class RegionOverlay: NSView {
     required init?(coder: NSCoder) { fatalError("不支持归档初始化") }
 
     func clear() { selection = .zero; drag = nil; needsDisplay = true; window?.makeKeyAndOrderFront(nil) }
+    /// 直接摆出一个现成的框（上次录制的区域）并当作已经拖好：分辨率变过就收进屏幕里，收完太小就不摆。
+    func preset(_ rect: CGRect) {
+        let fitted = rect.intersection(bounds)
+        guard fitted.width >= 32, fitted.height >= 32 else { return }
+        selection = fitted; drag = nil; needsDisplay = true
+        completed?(fitted)
+    }
 
     // MARK: 绘制
 

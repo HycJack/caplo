@@ -144,6 +144,7 @@ public final class RecordBarModel {
         options.frameRate = Double(max(24, min(120, defaults.object(forKey: "recording.frameRate") as? Int ?? 60)))
         options.region = mode == .region ? region : nil
         options.keyCapture = RecordingKeyPreferences.mode(defaults: defaults)
+        options.hideDesktopIcons = defaults.bool(forKey: "recording.hideDesktopIcons")
         RecordingAudioPreferences.apply(to: &options)
         RecordingCameraPreferences.apply(to: &options)
         // 所选设备不在线就不带这路输入，而不是报错拦住录制。
@@ -158,6 +159,8 @@ public final class RecordBarModel {
             // 开着"记录按键"却没有输入监控权限：同样先带去授权，不悄悄录一段没有按键的。
             if options.keyCapture != .off, center.status(.keyboard) != .granted { PermissionsWindow.shared.show(.standalone, focus: .keyboard); return }
         }
+        // 记下这次的录制区域：下次进区域模式直接把这个框摆出来。
+        if mode == .region, let region, let displayID = source.displayID { RegionSession.rememberRecorded(region, displayID: displayID) }
         guard StudioWindows.prepareForRecording() else { return }
         localError = nil
         // 试听与预览不停：录制器直接借用正在跑的麦克风采集与摄像头会话（只加写盘出口），设备从打开到录完一直亮着。

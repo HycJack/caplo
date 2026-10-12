@@ -1195,6 +1195,12 @@ final class VideoEditorModel {
                 // 默认的 ~/Movies/Caplo 第一次导出时才建；选好之后被删掉的文件夹也在这里补上。
                 try FileManager.default.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
                 try await ProjectMedia.export(url: entry.url, document: entry.document, levels: snapshot.audio, destination: destination, edit: snapshot, settings: settings, pointers: pointers) { self.progress = $0; DockProgress.update($0) }
+                if settings.copiesToClipboard, !Task.isCancelled {
+                    // 放的是文件引用（不是把整段视频读进剪贴板）：粘贴到访达是拷贝文件，粘贴到聊天、邮件是添加附件。
+                    let pasteboard = NSPasteboard.general
+                    pasteboard.clearContents()
+                    pasteboard.writeObjects([destination as NSURL])
+                }
                 if settings.revealsInFinder, !Task.isCancelled { NSWorkspace.shared.activateFileViewerSelecting([destination]) }
             } catch is CancellationError {} catch { if !Task.isCancelled { self.error = error.localizedDescription } }
         }

@@ -22,6 +22,7 @@ public struct RecordBarView: View {
     @AppStorage("recording.systemAudioApplications") private var applicationData = Data()
     @AppStorage("recording.countdown") private var countdown = 3
     @AppStorage(RecordingKeyPreferences.key) private var keyCapture = KeyCaptureMode.off
+    @AppStorage("recording.hideDesktopIcons") private var hideDesktopIcons = false
     @AppStorage("recording.frameRate") private var frameRate = 60
     @State private var devices: [CaptureMicrophone] = []
     @State private var cameras: [CaptureCamera] = []
@@ -105,6 +106,7 @@ public struct RecordBarView: View {
                 .submenu(String(localized: "记录按键 · ") + keyCapture.title, KeyCaptureMode.allCases.map { mode in
                     choice(mode.title, selected: keyCapture == mode) { keyCapture = mode; RecordingKeyPreferences.requestAccessIfNeeded(for: mode) }
                 }),
+                .item(String(localized: "隐藏桌面图标"), checked: hideDesktopIcons, enabled: model.mode != .window) { hideDesktopIcons.toggle() },
                 .separator,
                 .item(String(localized: "更多设置")) { StudioWindows.showSettings() },
             ]

@@ -174,6 +174,28 @@ final class SegmentedCaptureWriter: NSObject, SCStreamOutput, @unchecked Sendabl
         }
     }
 
+    /// 录制中关掉 / 重新打开人像。关掉之后到达的人像帧不再写入；这一段已经有人像的话就地换段，
+    /// 让人像文件在这一刻结束——不换段的话，人像会在这一段剩下的时间里停在最后一帧上。
+    /// 重新打开时不用换段：新的人像帧自己在当前片段里开文件，起点偏移另记（与摄像头晚于屏幕出帧同一机制）。
+    /// 关掉的那些片段没有人像文件，成片里那段时间人像自然不出现。
+    private var cameraEnabled = true
+    func setCameraEnabled(_ enabled: Bool, at time: CMTime) async {
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            queue.async { [self] in
+                defer { continuation.resume() }
+                guard !stopped, cameraEnabled != enabled else { return }
+                cameraEnabled = enabled
+                guard !enabled else { return }
+                // 不留"边界附近的最后一帧"：否则换段时会被垫到新段开头，人像又冒出来一帧。
+                latestCameraFrame = nil
+                guard !paused, let segment = current, segment.tracks[.camera] != nil else { return }
+                // 段首 0.1 秒内不换（片段至少要有时长）：把换段点挪到 0.1 秒处，人像至多多留这一点点。
+                let point = CMTimeMaximum(time, segment.start + CMTime(value: 1, timescale: 10))
+                perform { try rotate(at: point) }
+            }
+        }
+    }
+
     func startTimer(clock: CMClock?) {
         queue.async { [self] in
             self.clock = clock ?? CMClockGetHostTimeClock()
@@ -209,6 +231,7 @@ final class SegmentedCaptureWriter: NSObject, SCStreamOutput, @unchecked Sendabl
     func ingest(_ sample: CMSampleBuffer, role: MediaRole) {
         dispatchPrecondition(condition: .onQueue(queue))
         guard !stopped, roles.contains(role), sample.isValid, sample.presentationTimeStamp.isNumeric, reportedFailure == nil else { return }
+        if role == .camera, !cameraEnabled { return }
         if let from = resumeFrom, current == nil, !paused {
             let end = sample.presentationTimeStamp + (sample.duration.isNumeric ? sample.duration : .zero)
             if end > from { resumeFrom = end }

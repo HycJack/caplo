@@ -141,7 +141,9 @@ enum CameraPreviewCoordinator {
         let preview = CameraMonitor.shared.feed
         let screen = StudioWindows.currentRecordBarModel?.targetScreen ?? NSScreen.main ?? NSScreen.screens[0]
         // 录制器借用的正是预览那条采集图，接上后对象相同，画面不断；倒计时期间预览采集图继续显示。
-        let feed = (busy && usesCamera ? recording : nil) ?? preview
+        // 录制中关掉了人像：取景窗收起，用户一眼看得出现在没在录人像。
+        let suspended = recorder.cameraSuspended
+        let feed = busy && usesCamera && suspended ? nil : (busy && usesCamera ? recording : nil) ?? preview
         if let feed { CameraPreviewSession.show(feed: feed, on: screen) } else { CameraPreviewSession.hide() }
     }
 }

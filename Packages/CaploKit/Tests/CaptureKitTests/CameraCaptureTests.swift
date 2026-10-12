@@ -78,6 +78,44 @@ private func cameraTime(_ seconds: Double) -> CMTime { CMTime(seconds: seconds, 
     #expect(document.segments.count == 2 && document.segments.allSatisfy { $0.files[.camera] != nil }, "片段 \(document.segments.map(\.files))")
 }
 
+/// 录制中关掉人像：就地换段，关着的那一段没有人像文件；重新打开后人像在新片段里从那一刻接上（起点偏移另记）。
+@Test func suspendingTheCameraLeavesThatStretchWithoutCameraFootage() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let url = try ProjectStorage.create(in: root, name: "录制中关人像")
+    let failures = OSAllocatedUnfairLock(initialState: [String]())
+    let writer = SegmentedCaptureWriter(project: url, width: 320, height: 180, systemAudio: false, microphone: false, camera: true,
+                                        onStarted: {}, onFailure: { message in failures.withLock { $0.append(message) } })
+    try await onQueue(writer) {
+        writer.ingest(try makeFrame(at: cameraTime(10)), role: .screen)
+        for time in [10.0, 10.5, 10.9] { writer.ingest(try cameraFrame(at: time, red: true), role: .camera) }
+    }
+    await writer.setCameraEnabled(false, at: cameraTime(11))
+    try await onQueue(writer) {
+        // 关着的时候到达的人像帧一律不写。
+        for time in [11.2, 11.6, 12.0] { writer.ingest(try cameraFrame(at: time, red: true), role: .camera) }
+        writer.ingest(try makeFrame(at: cameraTime(12.4)), role: .screen)
+    }
+    await writer.setCameraEnabled(true, at: cameraTime(12.5))
+    try await onQueue(writer) {
+        for time in [12.5, 13.0] { writer.ingest(try cameraFrame(at: time, red: false), role: .camera) }
+    }
+    try await writer.finish(at: cameraTime(13.5))
+    #expect(failures.withLock { $0 }.isEmpty, "关开人像结束了录制：\(failures.withLock { $0 })")
+    let document = try ProjectStorage.load(url)
+    let segments = document.segments.sorted { $0.id < $1.id }
+    #expect(segments.count == 2, "片段 \(segments.map(\.files))")
+    // 第一段到关掉那一刻为止，带着人像；第二段的人像从重新打开那一刻（段内 1.5 秒处）才开始。
+    #expect(abs(segments[0].duration - 1) < 0.01 && segments[0].files[.camera] != nil)
+    #expect(segments[1].files[.camera] != nil && abs(segments[1].offset(for: .camera) - 1.5) < 0.01, "第二段人像偏移 \(segments[1].offset(for: .camera))")
+    // 成片上：关着的那段（1.0–2.5 秒）没有人像来源，前后都有。
+    var edit = VideoEdit(duration: document.duration); edit.camera = CameraLayout()
+    let item = try await ProjectMedia.playerItem(url: url, document: document, levels: edit.audio, edit: edit)
+    let instruction = try #require(item.videoComposition?.instructions.first as? SceneInstruction)
+    #expect(instruction.cameraSource(at: cameraTime(0.5)) != nil && instruction.cameraSource(at: cameraTime(3.0)) != nil)
+    #expect(instruction.cameraSource(at: cameraTime(1.8)) == nil, "关着的那段仍然有人像")
+}
+
 /// 用不同尺寸与纯色辨识两个来源；所有测试只构造像素缓冲，不发现或启动真实设备。
 private func cameraFrame(at seconds: Double, red: Bool, width: Int = 160, split: Bool = false) throws -> CMSampleBuffer {
     var created: CVPixelBuffer?

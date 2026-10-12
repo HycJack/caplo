@@ -83,9 +83,11 @@ private struct LiveRecordingControls: View {
     var body: some View {
         TimelineView(.periodic(from: recorder.elapsedOrigin ?? fallbackOrigin, by: 0.1)) { context in
             RecordingControls(state: state(at: context.date),
+                              cameraSuspended: recorder.sessionUsesCamera ? recorder.cameraSuspended : nil,
                               cancel: { recorder.cancelCountdown() },
                               pauseResume: { Task { if recorder.phase == .paused { await recorder.resume() } else { await recorder.pause() } } },
-                              stop: { Task { await recorder.stop() } })
+                              stop: { Task { await recorder.stop() } },
+                              toggleCamera: { Task { await recorder.setCameraSuspended(!recorder.cameraSuspended) } })
         }
     }
     private func state(at date: Date) -> RecordingControls.State {
@@ -107,9 +109,14 @@ public struct RecordingControls: View {
     let cancel: () -> Void
     let pauseResume: () -> Void
     let stop: () -> Void
+    /// 这次录制带摄像头时才有的人像开关：nil 不显示按钮，true 表示人像此刻关着。
+    let cameraSuspended: Bool?
+    let toggleCamera: () -> Void
 
-    public init(state: State, cancel: @escaping () -> Void = {}, pauseResume: @escaping () -> Void = {}, stop: @escaping () -> Void = {}) {
+    public init(state: State, cameraSuspended: Bool? = nil, cancel: @escaping () -> Void = {}, pauseResume: @escaping () -> Void = {},
+                stop: @escaping () -> Void = {}, toggleCamera: @escaping () -> Void = {}) {
         self.state = state; self.cancel = cancel; self.pauseResume = pauseResume; self.stop = stop
+        self.cameraSuspended = cameraSuspended; self.toggleCamera = toggleCamera
     }
 
     public var body: some View {
@@ -128,6 +135,12 @@ public struct RecordingControls: View {
                 Button(action: pauseResume) { Image(systemName: paused ? "play.fill" : "pause.fill") }
                     .buttonStyle(StudioIconButtonStyle()).disabled(!canStop)
                     .help(paused ? "继续录制" : "暂停录制").accessibilityLabel(paused ? "继续录制" : "暂停录制")
+                if let cameraSuspended {
+                    // 录制中关掉人像：关着的那段时间成片里没有人像，再点一下接着录。
+                    Button(action: toggleCamera) { Image(systemName: cameraSuspended ? "video.slash.fill" : "video.fill") }
+                        .buttonStyle(StudioIconButtonStyle(active: cameraSuspended)).disabled(!canStop)
+                        .help(cameraSuspended ? "打开人像" : "关闭人像").accessibilityLabel(cameraSuspended ? "打开人像" : "关闭人像")
+                }
                 Button(action: stop) {
                     if stopping { ProgressView().controlSize(.small) } else { Image(systemName: "stop.fill").foregroundStyle(CaploColor.record) }
                 }

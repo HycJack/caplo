@@ -38,6 +38,8 @@ public struct RecordingOptions: Sendable {
     public var capturePointer = true
     /// 记录按键的档位；需要输入监控权限，没有权限时这次录制不带按键。
     public var keyCapture = KeyCaptureMode.off
+    /// 全屏 / 区域录制时不录桌面图标，只留壁纸。
+    public var hideDesktopIcons = false
     public var reconstructCursor = true
     public var region: CGRect?
     /// 录制帧率（24…120），默认 60：滚动与光标运动更顺滑，编码与回放都按同一帧率。
@@ -76,6 +78,9 @@ public final class ScreenRecorder {
     /// 本次录制是否带摄像头（倒计时阶段就为真，画中画先显示占位）；录制中的摄像头会话给屏幕上的画中画预览用。
     public private(set) var sessionUsesCamera = false
     public var cameraPreviewFeed: CameraFeed? { cameraCapture?.previewFeed }
+    /// 这次录制带摄像头、但此刻暂时不录人像。摄像头设备保持开着（指示灯仍亮，重新打开立刻接上），只是画面不写进素材；
+    /// 屏幕上的取景窗这时也收起（见 `CameraPreviewCoordinator`）。
+    public private(set) var cameraSuspended = false
     private var microphoneCapture: MicrophoneCapture?
     /// 麦克风借用了录制条试听中的采集（没有重启引擎）：结束时只摘写入器。
     private var microphoneBorrowed = false
@@ -84,6 +89,8 @@ public final class ScreenRecorder {
     private var lease: ProjectLease?
     private var pointerRecorder: PointerRecorder?
     private var keyRecorder: KeyRecorder?
+    /// 这次录制要不要把桌面图标排除在画面外；录制中重建过滤器时要带上同样的排除。
+    private var sessionHidesDesktopIcons = false
     private var firstFrameTimeout: Task<Void, Never>?
     private var sessionID: UUID?
     /// 全屏 / 区域录制的显示器与当前过滤器排除的本应用窗口号；录制期间监视本应用窗口的增减。
@@ -133,7 +140,7 @@ public final class ScreenRecorder {
         }
         phase = .starting
         errorMessage = nil; completedURL = nil; projectURL = nil
-        sessionUsesCamera = options.camera; microphoneBorrowed = false
+        sessionUsesCamera = options.camera; microphoneBorrowed = false; cameraSuspended = false
         elapsedBeforeResume = 0; activeIntervalStart = nil; elapsedOrigin = nil
         let id = UUID(); sessionID = id
         do {
@@ -183,7 +190,17 @@ public final class ScreenRecorder {
                     NSLog("Caplo：两次共享内容快照里都没有本应用的窗口，只能靠浮层的 sharingType 挡住。%@", OwnWindowExclusion.diagnostics(content: content))
                 }
                 NSLog("Caplo：录制过滤器排除本应用 %d 个窗口、%d 个应用条目", exclusion.windows.count, exclusion.applications.count)
-                filter = exclusion.filter(display: display)
+                // 隐藏桌面图标：访达画图标的那几层要另取一份包含桌面窗口的快照才找得到。找不到就照常录，不拦录制。
+                var desktopIcons: [SCWindow] = []
+                sessionHidesDesktopIcons = options.hideDesktopIcons
+                if options.hideDesktopIcons {
+                    if let desktop = try? await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true) {
+                        guard sessionID == id else { return }
+                        desktopIcons = OwnWindowExclusion.desktopIconWindows(in: desktop)
+                    }
+                    NSLog("Caplo：隐藏桌面图标，排除访达桌面图标层 %d 个", desktopIcons.count)
+                }
+                filter = exclusion.filter(display: display, alsoExcluding: desktopIcons)
                 sessionDisplayID = display.displayID
                 excludedWindowIDs = exclusion.windowIDs
                 knownVisibleWindowIDs = OwnWindowExclusion.visibleWindowIDs()
@@ -348,7 +365,14 @@ public final class ScreenRecorder {
 
     public func cancelCountdown() {
         guard phase == .countdown else { return }
-        sessionID = nil; countdownRemaining = 0; phase = .idle; sessionUsesCamera = false
+        sessionID = nil; countdownRemaining = 0; phase = .idle; sessionUsesCamera = false; cameraSuspended = false
+    }
+
+    /// 录制中关掉 / 重新打开人像：关掉的那段时间成片里没有人像。只在带摄像头的录制进行中有效。
+    public func setCameraSuspended(_ suspended: Bool) async {
+        guard sessionUsesCamera, canStop, suspended != cameraSuspended, let writer else { return }
+        cameraSuspended = suspended
+        await writer.setCameraEnabled(!suspended, at: captureTime)
     }
 
     public func pause() async {
@@ -404,7 +428,13 @@ public final class ScreenRecorder {
                     let exclusion = OwnWindowExclusion(content: content)
                     // 只有快照里多出了能排除的本应用窗口才更新过滤器：更新会让系统重新评估浮层的 sharingType，无谓的更新可能把它们放进画面。
                     guard !exclusion.windowIDs.isSubset(of: self.excludedWindowIDs) else { continue }
-                    try await stream.updateContentFilter(exclusion.filter(display: display))
+                    // 重建过滤器时桌面图标层要照样排除，否则控制条一重新出现图标就回到画面里了。
+                    var desktopIcons: [SCWindow] = []
+                    if self.sessionHidesDesktopIcons, let desktop = try? await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true) {
+                        desktopIcons = OwnWindowExclusion.desktopIconWindows(in: desktop)
+                    }
+                    guard self.sessionID == id else { return }
+                    try await stream.updateContentFilter(exclusion.filter(display: display, alsoExcluding: desktopIcons))
                     guard self.sessionID == id else { return }
                     self.excludedWindowIDs = exclusion.windowIDs
                     NSLog("Caplo：录制过滤器已更新，排除本应用 %d 个窗口", exclusion.windows.count)
@@ -463,7 +493,7 @@ public final class ScreenRecorder {
             try? FileManager.default.trashItem(at: emptyProject, resultingItemURL: nil)
             projectURL = nil
         }
-        startedAt = nil; phase = .idle; sessionUsesCamera = false
+        startedAt = nil; phase = .idle; sessionUsesCamera = false; cameraSuspended = false
     }
 
     private func resolveAudio(_ options: RecordingOptions, content: SCShareableContent) throws -> RecordingAudioPlan {
