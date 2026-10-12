@@ -46,8 +46,9 @@ enum TeleprompterWindow {
     /// 这次滚动是不是跟着录制自动开始的：只有这种情况下暂停 / 结束录制才替用户停下来。
     private static var startedByRecording = false
     private static var lastPhase = ScreenRecorder.Phase.idle
-    nonisolated static let defaultSize = CGSize(width: 460, height: 220)
-    static let minimumSize = CGSize(width: 320, height: 140)
+    nonisolated static let defaultSize = CGSize(width: 460, height: 240)
+    /// 宽度够工具条排开，高度够按默认字号露出两行讲稿。
+    static let minimumSize = CGSize(width: 360, height: 160)
 
     static var isVisible: Bool { panel?.isVisible == true }
 
@@ -73,9 +74,23 @@ enum TeleprompterWindow {
             panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .ignoresCycle]
             // 不可共享：讲稿只给自己看，不进片子，别人截屏也看不到。
             panel.sharingType = .none
-            panel.contentView = NSHostingView(rootView: TeleprompterView(model: .shared, close: { TeleprompterWindow.hide() }))
+            let host = NSHostingView(rootView: TeleprompterView(model: .shared, close: { TeleprompterWindow.hide() }))
+            // 托管视图会按界面自身的最小尺寸改写窗口下限（高度能一直压到只剩工具条）：关掉，下限只认上面的 minSize。
+            host.sizingOptions = []
+            let content = NSView(frame: CGRect(origin: .zero, size: frame.size))
+            let resize = TeleprompterResizeView(frame: content.bounds)
+            for view in [host, resize] {
+                view.frame = content.bounds
+                view.autoresizingMask = [.width, .height]
+                content.addSubview(view)
+            }
+            panel.contentView = content
             // 记住用户拖到的位置与大小。
             panel.setFrameAutosaveName("caplo-teleprompter")
+            // 以前存下的尺寸可能比现在的下限小：按下限撑开，左上角不动。
+            let saved = panel.frame
+            let size = CGSize(width: max(saved.width, minimumSize.width), height: max(saved.height, minimumSize.height))
+            if size != saved.size { panel.setFrame(CGRect(x: saved.minX, y: saved.maxY - size.height, width: size.width, height: size.height), display: false) }
             self.panel = panel
         }
         panel?.orderFrontRegardless()
@@ -120,12 +135,133 @@ private final class TeleprompterPanel: NSPanel {
     override var canBecomeKey: Bool { true }
 }
 
+/// 盖在提词器界面上面的一圈缩放手柄：只有四边和四角接事件，其余位置让给下面的界面。
+///
+/// 无边框窗口自带的缩放区只有贴边的两三点宽，很难对准；这里在窗口内侧补一圈够宽的，系统那一圈照旧可用。
+/// 界面在这一圈里不放可点的东西（工具条、正文都往里收了同样的宽度）。
+final class TeleprompterResizeView: NSView {
+    /// 左、右、下三边手柄的宽度。
+    static let edge = 8.0
+    /// 顶边窄一些：紧挨着它的是拖动条，要把位置让出来。
+    static let topEdge = 5.0
+    /// 四角手柄的边长：对角缩放最常用，给得最大。
+    static let corner = 20.0
+
+    /// 一个手柄管哪几条边：边是一条，角是相邻的两条。
+    struct Edges: OptionSet {
+        let rawValue: Int
+        static let left = Edges(rawValue: 1), right = Edges(rawValue: 2), top = Edges(rawValue: 4), bottom = Edges(rawValue: 8)
+
+        var cursor: NSCursor {
+            let position: NSCursor.FrameResizePosition = switch self {
+            case [.top, .left]: .topLeft
+            case [.top, .right]: .topRight
+            case [.bottom, .left]: .bottomLeft
+            case [.bottom, .right]: .bottomRight
+            case .left: .left
+            case .right: .right
+            case .top: .top
+            default: .bottom
+            }
+            return .frameResize(position: position, directions: .all)
+        }
+    }
+    private var drag: (position: Edges, frame: CGRect, mouse: CGPoint)?
+
+    /// 八个手柄各占的范围（左下原点）。四角排在前面：和边重叠的地方算角。
+    private var zones: [(rect: CGRect, position: Edges)] {
+        let width = bounds.width, height = bounds.height, corner = Self.corner, edge = Self.edge, top = Self.topEdge
+        return [
+            (CGRect(x: 0, y: 0, width: corner, height: corner), [.bottom, .left]),
+            (CGRect(x: width - corner, y: 0, width: corner, height: corner), [.bottom, .right]),
+            (CGRect(x: 0, y: height - corner, width: corner, height: corner), [.top, .left]),
+            (CGRect(x: width - corner, y: height - corner, width: corner, height: corner), [.top, .right]),
+            (CGRect(x: 0, y: corner, width: edge, height: height - corner * 2), .left),
+            (CGRect(x: width - edge, y: corner, width: edge, height: height - corner * 2), .right),
+            (CGRect(x: corner, y: 0, width: width - corner * 2, height: edge), .bottom),
+            (CGRect(x: corner, y: height - top, width: width - corner * 2, height: top), .top),
+        ]
+    }
+
+    func position(at point: CGPoint) -> Edges {
+        zones.first { $0.rect.contains(point) }?.position ?? []
+    }
+
+    /// 按住某个手柄拖了 `delta`（屏幕坐标，向上为正）之后的窗口位置：对边不动，不小于下限。
+    static func resized(_ frame: CGRect, position: Edges, by delta: CGSize, minimum: CGSize) -> CGRect {
+        var result = frame
+        if position.contains(.right) { result.size.width = max(minimum.width, frame.width + delta.width) }
+        if position.contains(.left) {
+            result.size.width = max(minimum.width, frame.width - delta.width)
+            result.origin.x = frame.maxX - result.width
+        }
+        if position.contains(.top) { result.size.height = max(minimum.height, frame.height + delta.height) }
+        if position.contains(.bottom) {
+            result.size.height = max(minimum.height, frame.height - delta.height)
+            result.origin.y = frame.maxY - result.height
+        }
+        return result
+    }
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        position(at: convert(point, from: superview)).isEmpty ? nil : self
+    }
+    /// 窗口背景可以拖着走，手柄上按下去是缩放，不能被当成拖动。
+    override var mouseDownCanMoveWindow: Bool { false }
+    /// 提词器平时不是键窗口：第一下按下去就要能缩放。
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    override func resetCursorRects() {
+        for zone in zones { addCursorRect(zone.rect, cursor: zone.position.cursor) }
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        guard let window else { return }
+        let position = position(at: convert(event.locationInWindow, from: nil))
+        guard !position.isEmpty else { return }
+        // 用屏幕上的鼠标位置算位移：拖左边、下边时窗口原点跟着动，窗口内坐标不能直接相减。
+        drag = (position, window.frame, NSEvent.mouseLocation)
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        guard let drag, let window else { return }
+        let mouse = NSEvent.mouseLocation
+        let frame = Self.resized(drag.frame, position: drag.position, by: CGSize(width: mouse.x - drag.mouse.x, height: mouse.y - drag.mouse.y), minimum: window.minSize)
+        if frame != window.frame { window.setFrame(frame, display: true) }
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        guard drag != nil, let window else { return }
+        drag = nil
+        window.saveFrame(usingName: window.frameAutosaveName)
+    }
+}
+
+/// 按住就能拖动窗口的空白区域，垫在拖动条和工具条下面：上面的按钮、滑条照常接自己的点击。
+private struct WindowDragArea: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSView { DragView() }
+    func updateNSView(_ view: NSView, context: Context) {}
+
+    final class DragView: NSView {
+        override var mouseDownCanMoveWindow: Bool { true }
+        override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+        // 窗口没有按背景拖动时（系统没接手）自己发起拖动。
+        override func mouseDown(with event: NSEvent) { window?.performDrag(with: event) }
+    }
+}
+
 struct TeleprompterView: View {
     @Bindable var model: TeleprompterModel
     let close: () -> Void
 
+    /// 顶上拖动条的高度：和系统工具面板的标题栏差不多，整条都能按住拖。
+    static let gripHeight = 16.0
+
     var body: some View {
         VStack(spacing: 0) {
+            WindowDragArea()
+                .frame(height: Self.gripHeight)
+                .overlay { Capsule().fill(Color.white.opacity(0.28)).frame(width: 36, height: 4).offset(y: 1).allowsHitTesting(false) }
             HStack(spacing: CaploMetrics.Spacing.s) {
                 Button { if model.playing { model.playing = false } else { model.playing = !model.text.isEmpty } } label: {
                     Image(systemName: model.playing ? "pause.fill" : "play.fill")
@@ -149,7 +285,8 @@ struct TeleprompterView: View {
                     .help("关闭").accessibilityLabel("关闭提词器")
             }
             .padding(.horizontal, CaploMetrics.Spacing.s)
-            .frame(height: 36)
+            .frame(height: 32)
+            .background(WindowDragArea())
             ZStack(alignment: .topLeading) {
                 TeleprompterTextView(model: model)
                 if model.text.isEmpty {
@@ -160,12 +297,23 @@ struct TeleprompterView: View {
                         .allowsHitTesting(false)
                 }
             }
-            // 底边留一点：最后一行字不贴着圆角。
-            .padding(.bottom, 6)
+            // 左右和底边让出缩放手柄的宽度：正文、滚动条都不压在手柄上，最后一行字也不贴着圆角。
+            .padding(.horizontal, TeleprompterResizeView.edge)
+            .padding(.bottom, TeleprompterResizeView.edge + 2)
         }
         // 深色半透明底：压在任何桌面上都读得清，又不至于整块挡死后面的内容。
         .background(Color.black.opacity(0.78), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(Color.white.opacity(0.12)))
+        // 右下角两道斜线：提示这里可以拖着改大小。
+        .overlay(alignment: .bottomTrailing) {
+            Path { path in
+                path.move(to: CGPoint(x: 12, y: 3)); path.addLine(to: CGPoint(x: 3, y: 12))
+                path.move(to: CGPoint(x: 12, y: 8)); path.addLine(to: CGPoint(x: 8, y: 12))
+            }
+            .stroke(Color.white.opacity(0.3), style: StrokeStyle(lineWidth: 1.5, lineCap: .round))
+            .frame(width: 12, height: 12).padding(5)
+            .allowsHitTesting(false)
+        }
         .foregroundStyle(CaploColor.textPrimary)
         .tint(CaploColor.accent)
         .preferredColorScheme(.dark)
@@ -176,7 +324,7 @@ struct TeleprompterView: View {
 /// 每一步从滚动视图当前位置接着走，所以滚动中用手拨一下位置，它就从新位置继续。
 struct TeleprompterTextView: NSViewRepresentable {
     let model: TeleprompterModel
-    static let inset = CGSize(width: 14, height: 8)
+    static let inset = CGSize(width: 6, height: 8)
 
     func makeCoordinator() -> Coordinator { Coordinator(model: model) }
 
