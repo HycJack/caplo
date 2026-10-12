@@ -2335,6 +2335,28 @@
         }
       }
     },
+    "取消导出并关闭": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cancel Export and Close"
+          }
+        }
+      }
+    },
+    "取消导出并打开": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cancel Export and Open"
+          }
+        }
+      }
+    },
     "取消导出并退出": {
       "extractionState": "manual",
       "localizations": {
@@ -2566,13 +2588,13 @@
         }
       }
     },
-    "回到“影片”文件夹。": {
+    "回到 %@。": {
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Back to the Movies folder."
+            "value": "Back to %@."
           }
         }
       }
@@ -4622,6 +4644,17 @@
           "stringUnit": {
             "state": "translated",
             "value": "Typewriter"
+          }
+        }
+      }
+    },
+    "打开其他工程会取消这次导出。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Opening another project will cancel this export."
           }
         }
       }
@@ -7484,6 +7517,17 @@
           "stringUnit": {
             "state": "translated",
             "value": "Modern"
+          }
+        }
+      }
+    },
+    "现在关闭会取消这次导出。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Closing now will cancel this export."
           }
         }
       }

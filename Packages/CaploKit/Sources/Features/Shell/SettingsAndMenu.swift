@@ -148,12 +148,7 @@ public final class RecordingAppDelegate: NSObject, NSApplicationDelegate {
     public func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         // 正在导出：先问。以前直接退出，导出白做，目标文件夹里还留下隐藏的临时文件。
         if let editor = VideoEditorSessions.current, editor.exporting {
-            let alert = NSAlert()
-            alert.messageText = String(localized: "正在导出视频")
-            alert.informativeText = String(localized: "现在退出会取消这次导出。")
-            alert.addButton(withTitle: String(localized: "继续导出"))
-            alert.addButton(withTitle: String(localized: "取消导出并退出"))
-            guard alert.runModal() == .alertSecondButtonReturn else { return .terminateCancel }
+            guard VideoEditorSessions.confirmInterruptingExport(.quit) else { return .terminateCancel }
             Task { @MainActor in
                 // 等导出收尾（删掉临时文件）后再走一遍正常的退出检查。
                 await editor.cancelExportAndWait()

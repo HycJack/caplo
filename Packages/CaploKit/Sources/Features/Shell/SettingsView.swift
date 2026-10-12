@@ -211,15 +211,19 @@ public struct CaploSettingsView: View {
     /// 导出窗口里随时可以另选位置；勾着"记住这些设置"导出时，那次的位置与参数会同步到这里。
     @ViewBuilder private var export: some View {
         SettingsGroup(String(localized: "保存位置"), footer: String(localized: "导出窗口里可以随时另选位置；勾着\u{201C}记住这些设置\u{201D}导出时，那次的位置会成为这里的默认位置。")) {
-            SettingsRow(String(localized: "默认位置"), caption: exportFolder.path.replacingOccurrences(of: NSHomeDirectory(), with: "~")) {
+            SettingsRow(String(localized: "默认位置"), caption: Self.homeRelative(exportFolder)) {
                 HStack(spacing: CaploMetrics.Spacing.s) {
                     Button("更改") { chooseExportFolder() }.buttonStyle(StudioButtonStyle(.secondary, size: .small))
-                    Button("在访达中显示") { NSWorkspace.shared.activateFileViewerSelecting([exportFolder]) }
+                    Button("在访达中显示") {
+                        // 默认的 Caplo 文件夹要到第一次导出才建，这里先建好，访达才有东西可选中。
+                        try? FileManager.default.createDirectory(at: exportFolder, withIntermediateDirectories: true)
+                        NSWorkspace.shared.activateFileViewerSelecting([exportFolder])
+                    }
                         .buttonStyle(StudioButtonStyle(.quiet, size: .small))
                 }
             }
             if customExportFolder {
-                SettingsRow(String(localized: "恢复默认位置"), caption: String(localized: "回到\u{201C}影片\u{201D}文件夹。")) {
+                SettingsRow(String(localized: "恢复默认位置"), caption: String(localized: "回到 \(Self.homeRelative(ExportSettings.fallbackFolder))。")) {
                     Button("恢复") {
                         ExportSettings.setDefaultFolder(nil)
                         exportFolder = ExportSettings.defaultFolder(); customExportFolder = false
@@ -248,6 +252,7 @@ public struct CaploSettingsView: View {
         }
     }
 
+    private static func homeRelative(_ url: URL) -> String { url.path.replacingOccurrences(of: NSHomeDirectory(), with: "~") }
     private func chooseExportFolder() {
         let panel = NSOpenPanel()
         panel.canChooseDirectories = true; panel.canChooseFiles = false; panel.canCreateDirectories = true

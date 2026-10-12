@@ -131,6 +131,7 @@ public struct ExportSettings: Codable, Equatable, Sendable {
 
     static let defaultsKey = "export.settings"
     static let folderKey = "export.folder"
+    static let folderMigrationKey = "export.folder.caploDefault"
     static let rememberKey = "export.remember"
     public static let revealKey = "export.revealsInFinder"
 
@@ -156,22 +157,35 @@ public struct ExportSettings: Codable, Equatable, Sendable {
 
     // MARK: 保存位置
 
-    /// 导出窗口打开时的保存位置：设置页里选过的文件夹（还在的话），否则系统"影片"文件夹。
+    /// 导出窗口打开时的保存位置：设置页里选过的文件夹（还在的话），否则"影片"里的 Caplo 文件夹。
     /// 导出窗口里随时可以另选；勾着"记住这些设置"导出时，那次的文件夹会成为新的默认位置。
     public static func defaultFolder(in defaults: UserDefaults = .standard) -> URL {
+        migrateLegacyFolder(in: defaults)
         var directory: ObjCBool = false
         if let path = defaults.string(forKey: folderKey), FileManager.default.fileExists(atPath: path, isDirectory: &directory), directory.boolValue {
             return URL(fileURLWithPath: path, isDirectory: true)
         }
-        return moviesFolder
+        return fallbackFolder
     }
-    /// 设置默认保存位置；nil 恢复为"影片"文件夹。
+    /// 设置默认保存位置；nil 恢复为 `fallbackFolder`。
     public static func setDefaultFolder(_ url: URL?, in defaults: UserDefaults = .standard) {
         if let url { defaults.set(url.standardizedFileURL.path, forKey: folderKey) } else { defaults.removeObject(forKey: folderKey) }
     }
-    public static func hasCustomFolder(in defaults: UserDefaults = .standard) -> Bool { defaults.string(forKey: folderKey) != nil }
-    public static var moviesFolder: URL {
+    public static func hasCustomFolder(in defaults: UserDefaults = .standard) -> Bool {
+        migrateLegacyFolder(in: defaults)
+        return defaults.string(forKey: folderKey) != nil
+    }
+    /// 没选过位置时的去处：~/Movies/Caplo。成片集中放一处，不散在"影片"根目录里；文件夹到用的时候才建。
+    public static var fallbackFolder: URL { moviesFolder.appendingPathComponent("Caplo", isDirectory: true) }
+    private static var moviesFolder: URL {
         FileManager.default.urls(for: .moviesDirectory, in: .userDomainMask).first ?? FileManager.default.homeDirectoryForCurrentUser
+    }
+    /// 0.1.5 及以前的默认位置是"影片"文件夹本身，勾着"记住这些设置"导出一次就把它记成了自选位置。
+    /// 升级后清掉一次，让这些用户也用上新的默认位置；之后再自己选"影片"照常生效。
+    private static func migrateLegacyFolder(in defaults: UserDefaults) {
+        guard !defaults.bool(forKey: folderMigrationKey) else { return }
+        defaults.set(true, forKey: folderMigrationKey)
+        if defaults.string(forKey: folderKey) == moviesFolder.standardizedFileURL.path { defaults.removeObject(forKey: folderKey) }
     }
 
     /// 文件名里不能出现的字符换成"-"，两端空白去掉；空名返回 nil。

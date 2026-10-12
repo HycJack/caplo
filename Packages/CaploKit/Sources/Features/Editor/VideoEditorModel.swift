@@ -1166,6 +1166,8 @@ final class VideoEditorModel {
             do {
                 let pointers = await loadPointers()
                 try Task.checkCancellation()
+                // 默认的 ~/Movies/Caplo 第一次导出时才建；选好之后被删掉的文件夹也在这里补上。
+                try FileManager.default.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
                 try await ProjectMedia.export(url: entry.url, document: entry.document, levels: snapshot.audio, destination: destination, edit: snapshot, settings: settings, pointers: pointers) { self.progress = $0; DockProgress.update($0) }
                 if settings.revealsInFinder, !Task.isCancelled { NSWorkspace.shared.activateFileViewerSelecting([destination]) }
             } catch is CancellationError {} catch { if !Task.isCancelled { self.error = error.localizedDescription } }
@@ -1222,5 +1224,28 @@ enum VideoEditorSessions {
             alert.runModal(); return false
         }
         return true
+    }
+
+    /// 会打断导出的三种操作：关编辑窗口、换另一个工程、退出应用。
+    enum ExportInterruption { case close, open, quit }
+    /// 正在导出时先问一句：结束会话会连带取消导出，以前关窗和换工程都是悄悄取消，导出白做。
+    /// 没在导出，或用户确认取消，返回 true；选"继续导出"返回 false，调用方原样留着窗口。
+    static func confirmInterruptingExport(_ reason: ExportInterruption) -> Bool {
+        guard let current, current.exporting else { return true }
+        let alert = NSAlert()
+        alert.messageText = String(localized: "正在导出视频")
+        alert.addButton(withTitle: String(localized: "继续导出"))
+        switch reason {
+        case .close:
+            alert.informativeText = String(localized: "现在关闭会取消这次导出。")
+            alert.addButton(withTitle: String(localized: "取消导出并关闭"))
+        case .open:
+            alert.informativeText = String(localized: "打开其他工程会取消这次导出。")
+            alert.addButton(withTitle: String(localized: "取消导出并打开"))
+        case .quit:
+            alert.informativeText = String(localized: "现在退出会取消这次导出。")
+            alert.addButton(withTitle: String(localized: "取消导出并退出"))
+        }
+        return alert.runModal() == .alertSecondButtonReturn
     }
 }

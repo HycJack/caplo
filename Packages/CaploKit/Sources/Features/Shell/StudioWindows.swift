@@ -353,6 +353,12 @@ public final class VideoEditorWindow: NSObject, NSWindowDelegate {
             opening = false
             StudioWindows.hidePreparationWindows(); reveal(); return
         }
+        // 换工程会结束当前会话、连带取消导出：先问。选"继续导出"就不换；
+        // 录制结束的自动打开只触发一次，所以把刚录完的工程记下，编辑器关掉之后接着打开，并把正在导出的编辑器亮出来。
+        guard VideoEditorSessions.confirmInterruptingExport(.open) else {
+            if explicit == .recorder { deferredProject = url; reveal() }
+            return
+        }
         opening = true
         Task {
             defer { if openingID == id { opening = false } }
@@ -399,7 +405,9 @@ public final class VideoEditorWindow: NSObject, NSWindowDelegate {
         window?.orderOut(nil)
         AppPresence.update()
     }
-    public func windowShouldClose(_ sender: NSWindow) -> Bool { VideoEditorSessions.closeCurrent() }
+    public func windowShouldClose(_ sender: NSWindow) -> Bool {
+        VideoEditorSessions.confirmInterruptingExport(.close) && VideoEditorSessions.closeCurrent()
+    }
     public func windowWillClose(_ notification: Notification) {
         openingID = UUID(); opening = false
         model = nil
